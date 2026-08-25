@@ -1,1 +1,2 @@
-cl test.c
+cl test.c migrate.c
+test.exe
