@@ -1,2 +1,2 @@
-cl test.c migrate.c
-test.exe
+cl test.c migrate.c ../platform/windows.c ../arena.c /I..
+@REM test.exe
