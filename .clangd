@@ -1,0 +1,7 @@
+CompileFlags:
+  Add: [-Isrc, -Ithird_party/sokol, -Ithird_party/imgui, -Ithird_party/cgltf, -DSOKOL_D3D11, -DUSE_DBG_UI]
+---
+If:
+  PathMatch: [src/.*\.(c|h), build\.c]
+CompileFlags:
+  Add: [-xc, -std=gnu99]

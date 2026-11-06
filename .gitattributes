@@ -1,0 +1,18 @@
+# Normalize text line endings
+* text=auto
+
+# Git LFS: binary assets
+assets/**/*.glb  filter=lfs diff=lfs merge=lfs -text
+assets/**/*.gltf filter=lfs diff=lfs merge=lfs -text
+assets/**/*.bin  filter=lfs diff=lfs merge=lfs -text
+assets/**/*.png  filter=lfs diff=lfs merge=lfs -text
+assets/**/*.jpg  filter=lfs diff=lfs merge=lfs -text
+assets/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+assets/**/*.ktx2 filter=lfs diff=lfs merge=lfs -text
+assets/**/*.hdr  filter=lfs diff=lfs merge=lfs -text
+assets/**/*.wav  filter=lfs diff=lfs merge=lfs -text
+assets/**/*.ogg  filter=lfs diff=lfs merge=lfs -text
+
+# Git LFS: prebuilt tool binaries
+tools/**/*.exe   filter=lfs diff=lfs merge=lfs -text
+tools/linux/**   filter=lfs diff=lfs merge=lfs -text
