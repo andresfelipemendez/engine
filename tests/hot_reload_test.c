@@ -22,7 +22,11 @@
     #include <unistd.h>
     #include <utime.h>
     #define EXE      "./out/engine"
-    #define LIB_EXT  "so"
+    #if defined(__APPLE__)
+        #define LIB_EXT  "dylib"
+    #else
+        #define LIB_EXT  "so"
+    #endif
 #endif
 
 #define LOG        "out/test.log"

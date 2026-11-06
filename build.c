@@ -1,7 +1,7 @@
 // Build script (nob.h style). Bootstrap once, no flags needed:
 //
 //     gcc -o build build.c     (Windows / MinGW)
-//     cc  -o build build.c     (Linux / WSL)
+//     cc  -o build build.c     (Linux / WSL / macOS)
 //
 // then just run ./build -- it recompiles itself whenever build.c or nob.h change.
 //
@@ -12,9 +12,9 @@
 // Products (all in out/):
 //     engine[.exe]     host: window, GPU, memory, loads + hot reloads the game.
 //                      Relinked only when host.c changes (it is locked while running).
-//     libs.dll/.so     sokol + cgltf + imgui/dbgui. Loaded once by the host, so GPU
+//     libs.dll/.so/.dylib  sokol + cgltf + imgui/dbgui. Loaded once by the host, so GPU
 //                      state survives game reloads. Cached.
-//     game.dll/.so     unity build of the game (src/game.c). Rebuilt every run;
+//     game.dll/.so/.dylib  unity build of the game (src/game.c). Rebuilt every run;
 //                      the running engine picks it up automatically.
 #define NOB_IMPLEMENTATION
 #define NOB_STRIP_PREFIX
@@ -28,6 +28,11 @@
     #define LIB_EXT  "dll"
     #define EXE      "out/engine.exe"
     #define BACKEND  "-DSOKOL_D3D11"
+#elif defined(__APPLE__)
+    #define OBJ      "out/macos/"
+    #define LIB_EXT  "dylib"
+    #define EXE      "out/engine"
+    #define BACKEND  "-DSOKOL_METAL"
 #else
     #define OBJ      "out/linux/"
     #define LIB_EXT  "so"
@@ -60,10 +65,13 @@ static void cpp_compile(Cmd *cmd, const char *src, const char *obj) {
 }
 
 // links against the libs shared library (import directly from the .dll on
-// MinGW; on Linux by soname with an $ORIGIN rpath so out/ is searched)
+// MinGW; on Linux by soname with an $ORIGIN rpath so out/ is searched;
+// on macOS via its @rpath install name)
 static void link_libs(Cmd *cmd) {
 #if defined(_WIN32)
     cmd_append(cmd, LIBS_LIB);
+#elif defined(__APPLE__)
+    cmd_append(cmd, LIBS_LIB, "-Wl,-rpath,@loader_path");
 #else
     cmd_append(cmd, "-Lout", "-l:libs.so", "-Wl,-rpath,$ORIGIN");
 #endif
@@ -71,13 +79,20 @@ static void link_libs(Cmd *cmd) {
 
 #if defined(_WIN32)
     #define SHDC "tools/sokol-shdc.exe"
+#elif defined(__APPLE__)
+    #define SHDC "tools/macos/sokol-shdc"
+    #if defined(__aarch64__)
+        #define SHDC_URL "https://raw.githubusercontent.com/floooh/sokol-tools-bin/master/bin/osx_arm64/sokol-shdc"
+    #else
+        #define SHDC_URL "https://raw.githubusercontent.com/floooh/sokol-tools-bin/master/bin/osx/sokol-shdc"
+    #endif
 #else
     #define SHDC "tools/linux/sokol-shdc"
     #define SHDC_URL "https://raw.githubusercontent.com/floooh/sokol-tools-bin/master/bin/linux/sokol-shdc"
 #endif
 
 // the running game calls sokol-shdc for shader hot reload, so make sure the
-// native binary exists (Linux: downloaded on first build)
+// native binary exists (Linux/macOS: downloaded on first build)
 static bool ensure_shdc(void) {
     if (file_exists(SHDC)) return true;
 #if defined(_WIN32)
@@ -85,7 +100,7 @@ static bool ensure_shdc(void) {
     return true;
 #else
     Cmd cmd = {0};
-    if (!mkdir_if_not_exists("tools/linux")) return false;
+    if (!mkdir_if_not_exists(temp_dir_name(SHDC))) return false;
     cmd_append(&cmd, "curl", "-fsSL", "-o", SHDC, SHDC_URL);
     if (!cmd_run(&cmd)) return false;
     cmd_append(&cmd, "chmod", "+x", SHDC);
@@ -105,7 +120,7 @@ static bool build_shaders(void) {
     if (rebuild < 0) return false;
     if (rebuild == 0) return true;
     Cmd cmd = {0};
-    cmd_append(&cmd, SHDC, "-i", glsl, "-o", hdr, "-l", "hlsl5:glsl430");
+    cmd_append(&cmd, SHDC, "-i", glsl, "-o", hdr, "-l", "hlsl5:glsl430:metal_macos");
     return cmd_run(&cmd);
 }
 
@@ -121,7 +136,14 @@ static bool build_libs(void) {
     };
     da_append(&objs, OBJ "libs.o");
     if (needs_rebuild(OBJ "libs.o", libs_deps, ARRAY_LEN(libs_deps)) != 0) {
+#if defined(__APPLE__)
+        // sokol's Metal backend is Objective-C (-x must precede the source)
+        cmd_append(&cmd, "gcc", "-std=gnu99", "-x", "objective-c");
+        common_flags(&cmd);
+        cmd_append(&cmd, "-c", SRC "libs.c", "-o", OBJ "libs.o");
+#else
         c_compile(&cmd, SRC "libs.c", OBJ "libs.o");
+#endif
         if (!cmd_run(&cmd, .async = &procs)) return false;
     }
     for (size_t i = 0; i < ARRAY_LEN(imgui_units); i++) {
@@ -149,6 +171,9 @@ static bool build_libs(void) {
     // otherwise switch off MinGW's automatic export of everything else
     cmd_append(&cmd, "-Wl,--export-all-symbols");
     cmd_append(&cmd, "-lkernel32", "-luser32", "-lgdi32", "-lshell32", "-ld3d11", "-ldxgi");
+#elif defined(__APPLE__)
+    cmd_append(&cmd, "-install_name", "@rpath/libs.dylib");
+    cmd_append(&cmd, "-framework", "Cocoa", "-framework", "QuartzCore", "-framework", "Metal", "-framework", "MetalKit");
 #else
     cmd_append(&cmd, "-Wl,-soname,libs.so");
     cmd_append(&cmd, "-lX11", "-lXi", "-lXcursor", "-lGL", "-ldl", "-lpthread", "-lm");

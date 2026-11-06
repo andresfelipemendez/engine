@@ -8,9 +8,11 @@
 //------------------------------------------------------------------------------
 
 #if defined(_WIN32)
-#define SHDC_PATH "tools/sokol-shdc.exe"
+#include "platform/win32.h"
+#elif defined(__APPLE__)
+#include "platform/macos.h"
 #else
-#define SHDC_PATH "tools/linux/sokol-shdc"
+#include "platform/linux.h"
 #endif
 
 // reads a whole text file into a malloc'd NUL-terminated buffer, or NULL
@@ -49,6 +51,7 @@ static sg_shader shader_reload(const platform_api_t* p, const char* glsl_path, c
     switch (sg_query_backend()) {
         case SG_BACKEND_D3D11:  lang = "hlsl5";   ext = "hlsl"; break;
         case SG_BACKEND_GLCORE: lang = "glsl430"; ext = "glsl"; break;
+        case SG_BACKEND_METAL_MACOS: lang = "metal_macos"; ext = "metal"; break;
         default:
             snprintf(err, err_size, "backend not supported by shader reload");
             return (sg_shader){ SG_INVALID_ID };

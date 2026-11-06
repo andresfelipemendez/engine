@@ -16,14 +16,18 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#define LIB_EXT "dll"
+#include "platform/win32.h"
 #else
 #include <dirent.h>
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#define LIB_EXT "so"
+#if defined(__APPLE__)
+#include "platform/macos.h"
+#else
+#include "platform/linux.h"
+#endif
 #endif
 
 #include "sokol_app.h"
