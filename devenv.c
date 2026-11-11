@@ -10,6 +10,7 @@ int main() {
 	lib = LoadLibraryA("devenvlib");
 	if(lib==NULL){
 		printf("didn't find the lib");
+		return;
 	}
 	LOOP loopfn;
 	loopfn = (LOOP)GetProcAddress(lib,"loop");

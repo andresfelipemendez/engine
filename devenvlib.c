@@ -1,6 +1,7 @@
-#include "devenvlib.h"
+#define export __declspec(dllexport)
+
 #include <stdio.h>
 
-void call loop() { 
+export void loop() { 
 	printf("hello from dll");
 }
