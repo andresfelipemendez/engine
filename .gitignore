@@ -5,3 +5,5 @@ devenv.obj
 devenvlib.exp
 devenvlib.lib
 devenvlib.obj
+build.exe
+build.obj

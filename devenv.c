@@ -35,29 +35,43 @@ void ErrorExit()
 int main() {
 	printf("%s\n", "hi");
 
+	
+
+	printf("compiling...\n");
+	int r1 = system("call \"C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat\" && cl build.c && cl devenvlib.c /LD");
+	printf("compile returned: %d\n", r1);
+	int r2 = system("build.exe");
+	printf("build.exe returned: %d\n", r2);
+
+	// int r3 = system("cl devenvlib.c /LD");
+	// printf("compile devenvlib returned: %d\n", r2);
+
 	HMODULE lib;
 	lib = LoadLibraryA("devenvlib");
 	if(lib==NULL){
 		printf("didn't find the lib");
-		return;
+		return 1;
 	}
 	LOOP loopfn;
 	loopfn = (LOOP)GetProcAddress(lib,"loop");
 	loopfn();
 
-	HANDLE libFile;
-	libFile = CreateFileA(
-		"devenvlib.dll",		//lpFileName
-		GENERIC_READ,			//dwDesiredAccess
-		FILE_SHARE_DELETE|FILE_SHARE_READ|FILE_SHARE_WRITE,//dwShareMode
-		NULL,					//lpSecurityAttributes
-		OPEN_EXISTING,			//dwCreationDisposition
-		FILE_ATTRIBUTE_NORMAL,	//dwFlagsAndAttributes
-		NULL 					//hTemplateFile
-		);
-	if (libFile == INVALID_HANDLE_VALUE) {
-		//GetLastError();
-		printf("didn't open the lib");
-		ErrorExit();
-	}
+	// HANDLE libFile;
+	// libFile = CreateFileA(
+	// 	"devenvlib.dll",		//lpFileName
+	// 	GENERIC_READ,			//dwDesiredAccess
+	// 	FILE_SHARE_DELETE|FILE_SHARE_READ|FILE_SHARE_WRITE,//dwShareMode
+	// 	NULL,					//lpSecurityAttributes
+	// 	OPEN_EXISTING,			//dwCreationDisposition
+	// 	FILE_ATTRIBUTE_NORMAL,	//dwFlagsAndAttributes
+	// 	NULL 					//hTemplateFile
+	// 	);
+	// if (libFile == INVALID_HANDLE_VALUE) {
+	// 	//GetLastError();
+	// 	printf("didn't open the lib");
+	// 	ErrorExit();
+	// }
+
+
+
 }
