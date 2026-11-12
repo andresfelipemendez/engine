@@ -1,2 +1,7 @@
 a.exe
 devenvlib.dll
+devenv.exe
+devenv.obj
+devenvlib.exp
+devenvlib.lib
+devenvlib.obj

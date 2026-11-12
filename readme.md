@@ -1,3 +1,11 @@
-cc devenv.c
+# Engine
 
-cc -o devenvlib.dll devenvlib.c -s -shared
+```bash
+cc devenv.c
+cc -o devenvlib.dll devenvlib.c -shared
+```
+
+```bash
+cl devenv.c
+cl .\devenvlib.c /LD
+```
