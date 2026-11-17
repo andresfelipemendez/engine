@@ -5,3 +5,4 @@ raddbg.pdb filter=lfs diff=lfs merge=lfs -text
 radlink.exe filter=lfs diff=lfs merge=lfs -text
 radlink.pdb filter=lfs diff=lfs merge=lfs -text
 raddbg.com filter=lfs diff=lfs merge=lfs -text
+engine[[:space:]]x64[[:space:]]Native[[:space:]]Tools[[:space:]]Command[[:space:]]Prompt[[:space:]]for[[:space:]]VS.lnk filter=lfs diff=lfs merge=lfs -text

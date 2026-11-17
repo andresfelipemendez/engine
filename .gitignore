@@ -7,3 +7,4 @@ devenvlib.lib
 devenvlib.obj
 build.exe
 build.obj
+devenvlib_*.dll
