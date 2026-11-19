@@ -1,4 +1,31 @@
 #include "platform.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+struct PlatformFile {
+    enum { TYPE_WIN_HANDLE, TYPE_C_FILE } kind;
+    union {
+        HANDLE win_handle;
+        FILE*  c_file;
+    } native;
+    // ... any other state (path, flags, etc.)
+};
+
+int get_file_time(PlatformFile* file)    {
+     if (file.kind != TYPE_WIN_HANDLE) {
+        // Can't get FILETIME from a FILE* — decide how to handle this
+        return 0;
+    }
+
+    FILETIME ftCreate, ftAccess, ftWrite;
+    if (!GetFileTime(file.native.win_handle, &ftCreate, &ftAccess, &ftWrite)) {
+
+    }
+}
+
 
 void load_env() {
  	// Hardcoded from: vcvars64.bat && set  (VS 18.9.3, MSVC 14.51.36231, WinSDK 10.0.26100.0)
@@ -39,15 +66,14 @@ void load_env() {
 }
 
 
-void ErrorExit() 
-{ 
+void ErrorExit() {
     // Retrieve the system error message for the last-error code
 
     LPVOID lpMsgBuf;
-    DWORD dw = GetLastError(); 
+    DWORD dw = GetLastError();
 
     if (FormatMessage(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+        FORMAT_MESSAGE_ALLOCATE_BUFFER |
         FORMAT_MESSAGE_FROM_SYSTEM |
         FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL,
@@ -62,5 +88,5 @@ void ErrorExit()
 	printf("error %s\n",(LPCTSTR)lpMsgBuf);
 
     LocalFree(lpMsgBuf);
-    ExitProcess(dw); 
+    ExitProcess(dw);
 }

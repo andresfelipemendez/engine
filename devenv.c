@@ -1,7 +1,7 @@
 #include<stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <windows.h>
+
 #include "platform.h"
 typedef void(*LOOP)();
 
@@ -10,7 +10,7 @@ typedef void(*LOOP)();
 #else
 #endif
 
-int main() {	
+int main() {
 
 	load_env();
 
@@ -50,7 +50,4 @@ int main() {
 	// 	printf("didn't open the lib");
 	// 	ErrorExit();
 	// }
-
-
-
 }
