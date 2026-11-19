@@ -1,10 +1,9 @@
 #include<stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include "platform.h"
 
-typedef void(*LOOP)();
+typedef void(*LOOP)(void);
 
 #if _MSC_VER
 #include "msvc.c"
@@ -35,25 +34,12 @@ int main() {
 
 	error err;
 	PlatformLibrary lib;
-	load_library("devenvlib", &lib,	&err);
+	if(load_library("devenvlib", &lib,	&err)){
+		printf("didn't find the lib: %s\n", err.message);
+	};
 
 	LOOP loopfn;
 	loopfn = (LOOP)GetProcAddress(lib.native.win_module,"loop");
 	loopfn();
 
-	// HANDLE libFile;
-	// libFile = CreateFileA(
-	// 	"devenvlib.dll",		//lpFileName
-	// 	GENERIC_READ,			//dwDesiredAccess
-	// 	FILE_SHARE_DELETE|FILE_SHARE_READ|FILE_SHARE_WRITE,//dwShareMode
-	// 	NULL,					//lpSecurityAttributes
-	// 	OPEN_EXISTING,			//dwCreationDisposition
-	// 	FILE_ATTRIBUTE_NORMAL,	//dwFlagsAndAttributes
-	// 	NULL 					//hTemplateFile
-	// 	);
-	// if (libFile == INVALID_HANDLE_VALUE) {
-	// 	//GetLastError();
-	// 	printf("didn't open the lib");
-	// 	ErrorExit();
-	// }
 }

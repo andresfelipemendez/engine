@@ -3,8 +3,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+/* FILETIME is 100-ns tick since 1601-01-01.
+    POSIX time_t is seconds since 1970-01-01.
+    Delta: 116444736000 seconds. */
+static const unsigned long long FILETIME_EPOCH_DELTA = 116444736000ULL;
+
+static time_t filetime_to_timet(const FILETIME* ft) {
+    unsigned long long ticks = ((unsigned long long)ft->dwHighDateTime<<32)|
+    (unsigned long long)ft->dwLowDateTime;
+    return (time_t)(ticks/(10000000ULL-FILETIME_EPOCH_DELTA));
+}
 
 int load_library(const char* name, PlatformLibrary* library, error* err) {
     if (!name || !library) {

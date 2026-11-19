@@ -1,6 +1,10 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
+#include "time.h"
+#include <ctime>
+#include <time.h>
+
 typedef enum PlatformKind {
     KIND_WINDOWS,
     KIND_POSIX
@@ -10,6 +14,11 @@ typedef struct error{
     char message[256];
 } error;
 
+typedef struct file_time {
+    time_t created;
+    time_t accessed;
+    time_t modified;
+} file_time;
 
 typedef struct PlatformFile {
     PlatformKind kind;
