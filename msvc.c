@@ -1,30 +1,44 @@
 #include "platform.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-struct PlatformFile {
-    enum { TYPE_WIN_HANDLE, TYPE_C_FILE } kind;
-    union {
-        HANDLE win_handle;
-        FILE*  c_file;
-    } native;
-    // ... any other state (path, flags, etc.)
-};
+int load_library(const char* name, PlatformLibrary* library, error* err) {
+    if (!name || !library) {
+        snprintf(err->message, sizeof(err->message), "load_library: NULL argument");
+        return 1;
+    }
 
-int get_file_time(PlatformFile* file)    {
-     if (file.kind != TYPE_WIN_HANDLE) {
+    snprintf(library->name, sizeof(library->name), "%s", name);
+    library->kind = KIND_WINDOWS;
+
+    HMODULE h = LoadLibraryA(name);
+    if (h==NULL){
+        snprintf(err->message, sizeof(err->message), "LoadLibraryA(\"%s\") failed, err = %lu", name, (unsigned long)GetLastError());
+        return 1;
+    }
+
+    library->native.win_module=h;
+    return 0;
+}
+
+int get_file_time(PlatformFile* file, error* err)    {
+     if (file->kind != KIND_WINDOWS) {
         // Can't get FILETIME from a FILE* — decide how to handle this
         return 0;
     }
 
     FILETIME ftCreate, ftAccess, ftWrite;
-    if (!GetFileTime(file.native.win_handle, &ftCreate, &ftAccess, &ftWrite)) {
+    if (!GetFileTime(file->native.win_handle, &ftCreate, &ftAccess, &ftWrite)) {
 
     }
+    return 0;
 }
+
+
 
 
 void load_env() {

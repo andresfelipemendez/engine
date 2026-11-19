@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "platform.h"
+
 typedef void(*LOOP)();
 
 #if _MSC_VER
@@ -25,14 +26,19 @@ int main() {
 	// int r3 = system("cl devenvlib.c /LD");
 	// printf("compile devenvlib returned: %d\n", r2);
 
-	HMODULE lib;
-	lib = LoadLibraryA("devenvlib");
-	if(lib==NULL){
-		printf("didn't find the lib");
-		return 1;
-	}
+	// HMODULE lib;
+	// lib = LoadLibraryA("devenvlib");
+	// if(lib==NULL){
+	// 	printf("didn't find the lib");
+	// 	return 1;
+	// }
+
+	error err;
+	PlatformLibrary lib;
+	load_library("devenvlib", &lib,	&err);
+
 	LOOP loopfn;
-	loopfn = (LOOP)GetProcAddress(lib,"loop");
+	loopfn = (LOOP)GetProcAddress(lib.native.win_module,"loop");
 	loopfn();
 
 	// HANDLE libFile;

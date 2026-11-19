@@ -1,10 +1,35 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
-typedef struct PlatformFile PlatformFile;
+typedef enum PlatformKind {
+    KIND_WINDOWS,
+    KIND_POSIX
+} PlatformKind;
 
-void load_env();
+typedef struct error{
+    char message[256];
+} error;
 
-int get_file_time(PlatformFile* file);
+
+typedef struct PlatformFile {
+    PlatformKind kind;
+    union {
+        void* win_handle;   /* HANDLE  – opaque here, cast in .c */
+        void* c_file;       /* FILE*  */
+    } native;
+} PlatformFile;
+
+typedef struct PlatformLibrary {
+    PlatformKind kind;
+    union {
+        void* win_module;   /* HMODULE – opaque here, cast in .c */
+        void* posix_handle; /* dlopen */
+    } native;
+    char name[256];
+} PlatformLibrary;
+
+void load_env(void);
+int get_file_time(PlatformFile* file, error* err);
+int load_library(const char* name, PlatformLibrary* library, error* err);
 
 #endif
