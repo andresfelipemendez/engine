@@ -1,44 +1,40 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
-#include "time.h"
-#include <ctime>
-#include <time.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include "error.h"
+#include "string.h"
 
 typedef enum PlatformKind {
     KIND_WINDOWS,
     KIND_POSIX
 } PlatformKind;
 
-typedef struct error{
-    char message[256];
-} error;
 
-typedef struct file_time {
-    time_t created;
-    time_t accessed;
-    time_t modified;
-} file_time;
+typedef uint64_t FileTimeStamp;
 
 typedef struct PlatformFile {
     PlatformKind kind;
     union {
-        void* win_handle;   /* HANDLE  – opaque here, cast in .c */
-        void* c_file;       /* FILE*  */
+        void* win_handle;
+        void* c_file;
     } native;
 } PlatformFile;
 
 typedef struct PlatformLibrary {
     PlatformKind kind;
     union {
-        void* win_module;   /* HMODULE – opaque here, cast in .c */
-        void* posix_handle; /* dlopen */
+        void* win_module;
+        void* posix_handle;
     } native;
     char name[256];
 } PlatformLibrary;
 
 void load_env(void);
-int get_file_time(PlatformFile* file, error* err);
-int load_library(const char* name, PlatformLibrary* library, error* err);
+bool open_file(String path, PlatformFile* out, Error* err);
+void close_file(PlatformFile* file, Error* err);
+bool get_file_time(PlatformFile* file, FileTimeStamp* out, Error* err);
+bool load_library(const char* name, PlatformLibrary* out, Error* err);
 
 #endif

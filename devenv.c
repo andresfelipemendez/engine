@@ -11,7 +11,6 @@ typedef void(*LOOP)(void);
 #endif
 
 int main() {
-
 	load_env();
 
 	printf("compiling...\n");
@@ -22,24 +21,30 @@ int main() {
 	int r3 = system("build.exe");
 	printf("build.exe returned: %d\n", r3);
 
-	// int r3 = system("cl devenvlib.c /LD");
-	// printf("compile devenvlib returned: %d\n", r2);
+	Error err;
+	PlatformFile dll_file;
+	if(!open_file(S("devenvlib.dll"), &dll_file, &err)) {
+		printf("couldn't open file: %s\n", err.message);
+		return 1;
+	}
 
-	// HMODULE lib;
-	// lib = LoadLibraryA("devenvlib");
-	// if(lib==NULL){
-	// 	printf("didn't find the lib");
-	// 	return 1;
-	// }
+	FileTimeStamp now;
+	if(!get_file_time(&dll_file, &now, &err)){
+		printf("get_file_tile failed: %s\n", err.message);
+		close_file(&dll_file, &err);
+		return 1;
+	}
+	close_file(&dll_file, &err);
 
-	error err;
 	PlatformLibrary lib;
 	if(load_library("devenvlib", &lib,	&err)){
 		printf("didn't find the lib: %s\n", err.message);
 	};
 
-	LOOP loopfn;
-	loopfn = (LOOP)GetProcAddress(lib.native.win_module,"loop");
-	loopfn();
+
+
+	// LOOP loopfn;
+	// loopfn = (LOOP)GetProcAddress(lib.native.win_module,"loop");
+	// loopfn();
 
 }

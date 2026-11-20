@@ -1,5 +1,7 @@
 #include "platform.h"
 
+#include "error.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,21 +9,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-/* FILETIME is 100-ns tick since 1601-01-01.
-    POSIX time_t is seconds since 1970-01-01.
-    Delta: 116444736000 seconds. */
-static const unsigned long long FILETIME_EPOCH_DELTA = 116444736000ULL;
-
-static time_t filetime_to_timet(const FILETIME* ft) {
-    unsigned long long ticks = ((unsigned long long)ft->dwHighDateTime<<32)|
-    (unsigned long long)ft->dwLowDateTime;
-    return (time_t)(ticks/(10000000ULL-FILETIME_EPOCH_DELTA));
-}
-
-int load_library(const char* name, PlatformLibrary* library, error* err) {
+bool load_library(const char* name, PlatformLibrary* library, Error* err) {
     if (!name || !library) {
-        snprintf(err->message, sizeof(err->message), "load_library: NULL argument");
-        return 1;
+        SET_ERROR(err,"load_library: NULL argument");
+        return false;
     }
 
     snprintf(library->name, sizeof(library->name), "%s", name);
@@ -29,28 +20,60 @@ int load_library(const char* name, PlatformLibrary* library, error* err) {
 
     HMODULE h = LoadLibraryA(name);
     if (h==NULL){
-        snprintf(err->message, sizeof(err->message), "LoadLibraryA(\"%s\") failed, err = %lu", name, (unsigned long)GetLastError());
-        return 1;
+        snprintf(err->message, sizeof(err->message), "LoadLibraryA(\"%s\") failed, err = %lu", name, GetLastError());
+        return false;
     }
 
     library->native.win_module=h;
-    return 0;
+    return true;
 }
 
-int get_file_time(PlatformFile* file, error* err)    {
+bool get_file_time(PlatformFile* file, FileTimeStamp* out, Error* err) {
      if (file->kind != KIND_WINDOWS) {
-        // Can't get FILETIME from a FILE* — decide how to handle this
-        return 0;
+        snprintf(err->message, sizeof(err->message), "get_file_time: not a Windows handle");
+        return false;
     }
 
-    FILETIME ftCreate, ftAccess, ftWrite;
-    if (!GetFileTime(file->native.win_handle, &ftCreate, &ftAccess, &ftWrite)) {
-
+    FILETIME  ft;
+    if (!GetFileTime(file->native.win_handle, NULL, NULL, &ft)) {
+        snprintf(err->message, sizeof(err->message), "GetFileTime failed, err=%lu",GetLastError());
+        return false;
     }
-    return 0;
+    *out=((FileTimeStamp)ft.dwHighDateTime << 32) | (FileTimeStamp)ft.dwLowDateTime;
+    return true;
 }
 
+bool open_file(String path, PlatformFile *out, Error *err){
+    if(!out){
+        SET_ERROR(err, "open_file: NULL argument");
+        return false;
+    }
 
+    out->kind = KIND_WINDOWS;
+
+    HANDLE h = CreateFileA(
+        path.data,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (h == INVALID_HANDLE_VALUE){
+        SET_ERROR(err, "CreateFileA(\"%s\") failed, err=%lu",
+            path.data, GetLastError());
+        return false;
+    }
+
+    out->native.win_handle = h;
+    return true;
+}
+
+void close_file(PlatformFile *file, Error *err){
+
+}
 
 
 void load_env() {
