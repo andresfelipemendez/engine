@@ -34,6 +34,7 @@ typedef struct PlatformLibrary {
 void load_env(void);
 bool open_file(String path, PlatformFile* out, Error* err);
 void close_file(PlatformFile* file, Error* err);
+bool create_directory(String path, Error* err);
 bool get_file_time(PlatformFile* file, FileTimeStamp* out, Error* err);
 bool load_library(const char* name, PlatformLibrary* out, Error* err);
 

@@ -71,10 +71,17 @@ bool open_file(String path, PlatformFile *out, Error *err){
     return true;
 }
 
-void close_file(PlatformFile *file, Error *err){
+void close_file(PlatformFile *file, Error *err) {
 
 }
 
+bool create_directory(String path, Error *err) {
+    if(!path.data) {
+        SET_ERROR(err, "create_directory: NULL path");
+        return false;
+    }
+    return false;
+}
 
 void load_env() {
  	// Hardcoded from: vcvars64.bat && set  (VS 18.9.3, MSVC 14.51.36231, WinSDK 10.0.26100.0)

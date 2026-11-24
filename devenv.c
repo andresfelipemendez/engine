@@ -1,4 +1,4 @@
-#include<stdio.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "platform.h"
@@ -13,6 +13,12 @@ typedef void(*LOOP)(void);
 int main() {
 	load_env();
 
+	Error err;
+	if(!create_directory(S("build"), &err)){
+		fprintf(stderr, "%s\n", err.message);
+		return EXIT_FAILURE;
+	}
+
 	printf("compiling...\n");
 	int r1 = system("cl build.c");
 	printf("compile returned: %d\n", r1);
@@ -21,7 +27,7 @@ int main() {
 	int r3 = system("build.exe");
 	printf("build.exe returned: %d\n", r3);
 
-	Error err;
+
 	PlatformFile dll_file;
 	if(!open_file(S("devenvlib.dll"), &dll_file, &err)) {
 		printf("couldn't open file: %s\n", err.message);

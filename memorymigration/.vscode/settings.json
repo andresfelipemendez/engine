@@ -1,0 +1,4 @@
+{
+    "coverage-gutters.coverageBaseDir": "build",
+    "coverage-gutters.coverageFileNames": ["lcov.info"]
+}
