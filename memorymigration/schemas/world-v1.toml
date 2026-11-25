@@ -1,0 +1,22 @@
+name = "World"
+version = 1
+
+[[regions]]
+id = 10
+name = "World"
+
+[[regions.fields]]
+id = 2
+name = "speed"
+type = "f32"
+
+[[regions.fields]]
+id = 3
+name = "max_health"
+type = "i32"
+default = 100
+
+[[regions.fields]]
+id = 1
+name = "hp"
+type = i32

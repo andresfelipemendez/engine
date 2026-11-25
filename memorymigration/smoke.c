@@ -1,0 +1,1 @@
+__declspec(dllexport) int smoke(void) { return 1; }

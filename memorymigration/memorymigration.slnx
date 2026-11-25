@@ -3,5 +3,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="../generate_memory/generate_memory.vcxproj" />
   <Project Path="memorymigration.vcxproj" />
 </Solution>
