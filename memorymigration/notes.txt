@@ -1,0 +1,8 @@
+this is a bit harder than I imagine
+
+I need to read 2 things one the chunk of memory from the previous/current dll, the data layout of that chunk
+then iterate over the data layout as some kind of reflection? and copy/transfer the data to a new chunk of memory
+it might be easier to copy to a new block than to migrate in place, unles I start at the end? depends, if the
+overal size shrinks then at the begining, but that might be a later stage
+
+so I need the data, and a layout of the data
