@@ -1,8 +1,8 @@
-# Write your first C header lexer
+# 04 · Write your first C header lexer
 
 A **lexer** (or **tokenizer**) turns bytes into meaningful pieces called tokens. A **parser** turns those pieces into structure. In `int *count;`, the lexer sees a keyword, a star, a name, and a semicolon. The parser is the part that decides the star means `count` is a pointer.
 
-Work through this in a separate scratch folder. The first four sections give you a runnable example with three files. No arena or file I/O is required to get the lexer working; you'll connect it to your existing loader afterward.
+Create `lexer-lab` outside the repository. In the first four sections, you'll create `lexer.h` (token types and the lexer API), `lexer.c` (tokenization), and `lexer_demo.c` (the test caller) in that folder. No arena or file I/O is needed for this checkpoint; loader integration can wait.
 
 ## 1. Decide what a token looks like (`lexer.h`)
 
@@ -18,6 +18,8 @@ For `extern int *count;`, the lexer should produce:
 | `TOK_EOF` | — | `[18, 18)` |
 
 `[12, 17)` means start at byte 12 and stop **before** byte 17. You can store this as `start = 12`, `length = 5`. The token doesn't need its own copy of `count`; the original bytes are still in the source buffer.
+
+Create `lexer-lab/lexer.h` with the complete header below.
 
 ```c
 #ifndef LEXER_H
@@ -53,6 +55,8 @@ Token lexer_next(Lexer *lex);
 `Lexer` is the reading state. `Token` is a description of what was just read. Passing `Lexer *` means every call to `lexer_next` advances the same cursor.
 
 ## 2. Write the small helpers (`lexer.c`)
+
+Create `lexer-lab/lexer.c` beside `lexer.h`. Append `lexer_next` to this file in section 3.
 
 Start with **peek**: look at a byte without advancing. Use `int` as the return type so `-1` can mean end of input, while all actual bytes are in `0..255`. Check the boundary *before* looking into the buffer.
 
@@ -155,7 +159,7 @@ The decimal rule reads digits; it does not convert them to an integer yet. This 
 
 ## 4. See it run (`lexer_demo.c`)
 
-Start with a string literal rather than your Windows file loader. That way if the test fails, you only have the lexer to debug.
+Create `lexer-lab/lexer_demo.c` beside `lexer.c` and type the complete driver below. Start with a string literal rather than your Windows file loader. That way if the test fails, you only have the lexer to debug.
 
 ```c
 #include "lexer.h"
@@ -199,7 +203,7 @@ int main(void)
 }
 ```
 
-From an MSVC developer shell in your scratch folder:
+Save all three files. In an MSVC Developer PowerShell, change to `lexer-lab` and run:
 
 ```powershell
 cl /nologo /std:c11 /W4 lexer.c lexer_demo.c /Fe:lexer_demo.exe
@@ -303,4 +307,4 @@ Call it with a **fresh** lexer for `int count;`. It succeeds and tells you where
 
 Your next exercise: instead of returning only the name, define a declaration node that records the name token and the base type `int`. Then add one optional `*` before the name. At that point you'll want a parser that holds **one lookahead token** so it can check whether the star is present without losing the identifier when it isn't. Don't tackle nested C declarators, macros, or real system headers until this small example works. Raw `#include` and `#if` need preprocessing; skipping them isn't the same as knowing which declarations are active.
 
-Next: [Build a struct AST and compute field layouts](ast-layout-tutorial.md).
+Next on the main path: [05 · Build the `.mem` code generator](05-c-codegen-tutorial.md). For an optional C-header exercise, see [08 · Build a struct AST and compute field layouts](08-ast-layout-tutorial.md).

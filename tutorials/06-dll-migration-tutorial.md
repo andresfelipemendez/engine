@@ -1,22 +1,28 @@
-# Migrate opaque engine memory between two DLL builds
+# 06 · Migrate opaque engine memory between two DLL builds
 
-Use `memorymigration.slnx` to build **one host executable**. At runtime, `main.c` calls a TOML generator and `cl /LD`, just like the engine's `devenv.c` calls `cl`. The generator produces **`memory.h` and layout metadata**, not a version-specific migration function. The host loads a v1 DLL and a v2 DLL in one run, asks each for its layout, and migrates the block by comparing those descriptions. You don't need a file watcher or a reload loop to test this.
+Use `memorymigration.slnx` to build **one host executable**. At runtime, `main.c` calls a C generator for your `.mem` language and then `cl /LD`, just like the engine's `devenv.c` calls `cl`. The generator produces **`memory.h` and layout metadata**, not a version-specific migration function. The host loads a v1 DLL and a v2 DLL in one run, asks each for its layout, and migrates the block by comparing those descriptions. You don't need a file watcher or a reload loop to test this.
+
+## Prerequisites
+
+- Finish the [`.mem` generator checkpoint](05-c-codegen-tutorial.md) and open an x64 Native Tools Command Prompt.
+- For the integration steps below, use `memorymigration/` as the working directory. This lesson describes what you'll add, not what's already wired: the current `main.c` runs the scalar test and has a partial memory-index helper. Keep your scratch fixtures separate so you can rerun them.
+- In `memorymigration/`, prepare `schemas/player-v1.mem`, `schemas/player-v2.mem`, and `engine.c` (the DLL source, separate from the host's `main.c`). Put your built generator at `build/generate_memory.exe` and create the `build/v1` and `build/v2` directories before invoking it.
 
 | Owner | Responsibility |
 | --- | --- |
 | Host | Reserves and commits pages with `VirtualAlloc`, loads the DLLs, validates and diffs layout descriptions, copies bytes, and switches the active DLL and block. |
-| Engine DLL | Defines its persistent C types, decides where its regions go, and uses its own `Engine` index to access them. Exposes layout metadata but **does not** implement v1-to-v2 migration. |
-| Generator | Reads the TOML schema and emits `engine_api.h`, `memory.h`, and the C layout tables and exports. |
+| Engine DLL | Defines its persistent C types, decides where its regions go, and uses its own `Memory` index to access them. Exposes layout metadata but **does not** implement v1-to-v2 migration. |
+| Generator | Reads the `.mem` schema and emits `engine_api.h`, `memory.h`, and the C layout tables and exports. |
 
-**Opaque doesn't mean the host can't copy the bytes.** It means the host never includes `memory.h`, casts the block to `Engine *`, or needs to know that a field represents health or speed. It operates on IDs, byte ranges, and storage kinds supplied by the DLL.
+**Opaque doesn't mean the host can't copy the bytes.** It means the host never includes `memory.h`, casts the block to `Engine *`, or needs to know that a field represents health or speed. It operates on names, byte ranges, and storage kinds supplied by the DLL.
 
 ## 1. Give the host and DLL a small, stable API
 
-Generate `engine_api.h` from the TOML schema too. Give the schema an `abi_version` key. The generator uses that key to select the shared ABI declarations below. **Schemas with the same `abi_version` must generate ABI-compatible headers**, even if they have different regions and fields. Put those schema-specific declarations in each DLL's generated `memory.h`, not in the shared ABI.
+Generate `engine_api.h` alongside the other outputs. For now the generator always emits the same ABI-1 declarations below; the `.mem` language does not need a version directive. **Changing fields must not change the format the host uses to read layout tables.** Put schema-specific declarations in each DLL's generated `memory.h`, not in the shared ABI.
 
 Generate `engine_api.h` **before Visual Studio compiles the host** (run the generator manually first, then automate it if you want). The host cannot include a header that only gets generated when the executable runs. At runtime each schema generation can emit its own copy of `engine_api.h` into that DLL's output folder. Compile both DLLs and the host as x64 using matching ABI conventions.
 
-Start with plain arrays. This is a flattened form of your layout AST: a root contains regions, each region contains fields. It's **compiled layout metadata**, not a C syntax tree. An AST that only says `int health;` isn't enough to move bytes; the description needs offsets, sizes, alignment, and a stable storage-kind ID.
+Start with plain arrays. This is a flattened form of your layout AST: a root contains regions, each region contains fields. It's **compiled layout metadata**, not a C syntax tree. An AST that only says `i32 hp` isn't enough to move bytes; the description needs offsets, sizes, alignment, and a stable storage-kind ID.
 
 ```c
 #ifndef ENGINE_API_H
@@ -26,18 +32,18 @@ Start with plain arrays. This is a flattened form of your layout AST: a root con
 
 #define ENGINE_API_VERSION 1u
 
-enum { STORAGE_I32 = 1, STORAGE_F32 = 2, STORAGE_U32 = 3 };
+enum { STORAGE_I32 = 1, STORAGE_U32 = 2 };
 
 typedef struct {
-    uint32_t id;
-    uint32_t kind;         /* Shared enum: e.g. STORAGE_I32 or STORAGE_F32. */
+    const char *name;
+    uint32_t kind;         /* Shared enum: STORAGE_I32 or STORAGE_U32. */
     uint64_t offset;       /* Relative to the start of this region. */
     uint64_t size;
     uint64_t alignment;
 } FieldLayout;
 
 typedef struct {
-    uint32_t id;
+    const char *name;
     uint32_t field_count;
     uint64_t offset;       /* Relative to the start of the memory block. */
     uint64_t size;
@@ -62,46 +68,36 @@ The DLL exports `engine_api_version` and `engine_describe_layout`. Section 3 sho
 
 Also export `int engine_init(void *block, uint64_t size)`: ordinary initialization for any fresh block. It creates the engine's own index and sets default field values. It does not take an old block. Use `__declspec(dllexport)` on the DLL functions and matching function-pointer typedefs and calling conventions on the host side. The host calls them through `GetProcAddress`; it doesn't link an import library.
 
-For this test, table pointers can point to immutable storage inside each DLL. **Keep both DLLs loaded while the host uses those pointers.** If you want to retain a description after unloading its DLL, deep-copy the tables into host-owned storage first. Copying `EngineLayout` alone only copies its pointer.
+For this test, table pointers can point to immutable storage inside each DLL. **Keep both DLLs loaded while the host uses those pointers.** If you want to retain a description after unloading its DLL, deep-copy the tables and their name strings into host-owned storage first. Copying `EngineLayout` alone only copies its pointer.
 
 ## 2. Generate `memory.h` and let the compiler measure it
 
-Keep old and new TOML fixtures so one run can build both versions. Start with scalar fields only, and assign stable IDs to both regions and fields. Same ID means same logical data; order and spelling may change. Don't recycle IDs for unrelated data.
+Keep old and new `.mem` fixtures so one run can build both versions. Each top-level struct is one region. The host matches regions by name and fields by name within their region. Position may change; for now a rename is a removal plus an addition.
 
-For example, a v2 schema might look like this:
+For `schemas/player-v1.mem`:
 
-```toml
-abi_version = 1
-
-[[regions]]
-id = 10
-name = "World"
-
-[[regions.fields]]
-id = 2
-name = "speed"
-type = "f32"
-
-[[regions.fields]]
-id = 3
-name = "max_health"
-type = "i32"
-default = 100
-
-[[regions.fields]]
-id = 1
-name = "hp"
-type = "i32"
+```text
+struct Player {
+    i32 hp
+}
 ```
 
-In v1, define region `10` with `health` (ID `1`, `i32`) followed by `speed` (ID `2`, `f32`). Also add a `Counter` region with a single `u32` field in **both** versions, after `World`. This gives you a second region whose block offset can move when `World` grows.
+And `schemas/player-v2.mem`:
 
-Write the generator in C with `tomlc17`. The [C code-generator tutorial](c-codegen-tutorial.md) shows how to compile the parser, walk the TOML arrays, and emit the actual C declarations and table entries. The steps here describe what you'll generate:
+```text
+struct Player {
+    i32 ammo
+    i32 hp
+}
+```
 
-1. Validate names, unique IDs, supported storage kinds, and defaults. Use a whitelist such as `i32 → int32_t`, `u32 → uint32_t`, and `f32 → float`.
-2. Emit `engine_api.h` for the selected ABI and `memory.h` with declarations in TOML list order. Both DLLs can call their own type `World` because they compile separately.
-3. Emit `memory_layout.inc` with the layout tables and exports below. MSVC evaluates the `offsetof`, `sizeof`, and `_Alignof` expressions. **The generator does not predict MSVC padding.**
-4. Emit the default values the DLL uses in normal initialization. For v2, normal initialization sets `max_health` to `100`; the migration code won't need to know that `max_health` exists.
+Putting `ammo` first makes `hp` move. The syntax intentionally leaves out defaults: v2's ordinary `engine_init` sets `ammo` to `12`. For this fixture, compile the v2-only initialization statement behind a build define such as `PLAYER_HAS_AMMO` (pass `/DPLAYER_HAS_AMMO` only when compiling v2), so v1 never tries to access a member it doesn't have.
+
+The [C code-generator tutorial](05-c-codegen-tutorial.md) shows how to tokenize the language, parse structs and fields, and emit the generated files. In brief:
+
+1. Validate unique names, valid C spellings, and supported storage kinds (`i32 → int32_t`, `u32 → uint32_t`).
+2. Emit `engine_api.h` using the fixed ABI template and `memory.h` in declaration order. Both DLLs can call their type `Player` because they compile separately.
+3. Emit `memory_layout.inc` with the layout tables and exports below. MSVC evaluates the `offsetof`, `sizeof`, and `_Alignof` expressions in the Windows build. **The generator does not predict MSVC padding.**
 
 Inside the DLL, use one placement routine to calculate region offsets for both `engine_describe_layout(NULL, ...)` and `engine_init`. For the simplest fixed-size version you can also generate a top-level C aggregate and use `offsetof` for the region offsets. Either way, the **DLL**, not the host, owns the engine index. If that index is stored in the block, build it fresh in `engine_init` and **exclude it from the fields the host copies**. Otherwise the host might overwrite the new index with the old region offsets.
 
@@ -112,12 +108,11 @@ Start with a fixed layout, so you can prove the export works without building a 
 ```c
 #include <stdint.h>
 
-typedef struct { float speed; int32_t max_health; int32_t hp; } World;
-typedef struct { uint32_t value; } Counter;
-typedef struct { World region_World; Counter region_Counter; } EngineMemory;
+typedef struct { int32_t ammo; int32_t hp; } Player;
+typedef struct { Player region_Player; } EngineMemory;
 ```
 
-Now have the generator emit the following `memory_layout.inc` next to `memory.h`. Include `"memory_layout.inc"` **once** in your DLL's `engine.c`; don't compile it into the host. The `FIELD` macro shows exactly what to emit per field. The `REGION` macro computes offsets in the opposite direction: relative to the block instead of the field's enclosing struct.
+Now have the generator emit the following `memory_layout.inc` next to `memory.h`. [Tutorial 05, §5](05-c-codegen-tutorial.md#5-emit-the-tables-and-shared-api) shows how to write the two tables between the fixed prefix (includes and macros) and suffix (exports and `#undef`s). Include `"memory_layout.inc"` **once** in your DLL's `engine.c`; don't compile it into the host. The `FIELD` macro shows exactly what to emit per field. The `REGION` macro computes offsets in the opposite direction: relative to the block instead of the field's enclosing struct.
 
 ```c
 #include "engine_api.h"
@@ -125,23 +120,18 @@ Now have the generator emit the following `memory_layout.inc` next to `memory.h`
 #include <stddef.h>
 
 #define COUNT(a) ((uint32_t)(sizeof(a) / sizeof((a)[0])))
-#define FIELD(id, kind, T, member, C) \
-    {id, kind, offsetof(T, member), sizeof(C), _Alignof(C)}
-#define REGION(id, member, T, table) \
-    {id, COUNT(table), offsetof(EngineMemory, member), \
+#define FIELD(kind, T, member, C) \
+    {#member, kind, offsetof(T, member), sizeof(C), _Alignof(C)}
+#define REGION(name, member, T, table) \
+    {name, COUNT(table), offsetof(EngineMemory, member), \
      sizeof(T), _Alignof(T), table}
 
-static const FieldLayout world_fields[] = {
-    FIELD(2, STORAGE_F32, World, speed, float),
-    FIELD(3, STORAGE_I32, World, max_health, int32_t),
-    FIELD(1, STORAGE_I32, World, hp, int32_t),
-};
-static const FieldLayout counter_fields[] = {
-    FIELD(1, STORAGE_U32, Counter, value, uint32_t),
+static const FieldLayout fields_Player[] = {
+    FIELD(STORAGE_I32, Player, ammo, int32_t),
+    FIELD(STORAGE_I32, Player, hp, int32_t),
 };
 static const RegionLayout regions[] = {
-    REGION(10, region_World, World, world_fields),
-    REGION(20, region_Counter, Counter, counter_fields),
+    REGION("Player", region_Player, Player, fields_Player),
 };
 
 __declspec(dllexport) uint32_t __cdecl engine_api_version(void)
@@ -170,7 +160,7 @@ __declspec(dllexport) int __cdecl engine_describe_layout(
 #undef COUNT
 ```
 
-There are two lifetimes here. The **host** owns the `EngineLayout` variable: it passes its address and the DLL fills it in with `*out = ...`. The **DLL** owns the static `regions` and `*_fields` arrays. They're not stack variables, so the pointers remain valid after the function returns, but **not after `FreeLibrary`**. To keep the description longer, deep-copy all the arrays while the DLL is still loaded.
+There are two lifetimes here. The **host** owns the `EngineLayout` variable: it passes its address and the DLL fills it in with `*out = ...`. The **DLL** owns the static `regions` and `fields_*` arrays. They're not stack variables, so the pointers remain valid after the function returns, but **not after `FreeLibrary`**. To keep the description longer, deep-copy all the arrays and their name strings while the DLL is still loaded.
 
 Here's the host side **after** `LoadLibraryW` succeeds. Since `out` is caller-owned, no allocation or cross-DLL `free` is involved:
 
@@ -199,7 +189,7 @@ Keep `memorymigration.vcxproj` as the host-only project. Run the built host from
 Give your generator two arguments: the input schema and output directory. Generate `engine_api.h`, `memory.h`, and `memory_layout.inc` into each of `build/v1` and `build/v2`. Keep `engine.c` shared across builds, and don't leave copies of the generated files beside `engine.c` that would shadow the versions in the include directories. Once the build directories exist, a v1 command could look like this in `main.c`:
 
 ```c
-if (system("build\\generate_memory.exe schemas\\world-v1.toml "
+if (system("build\\generate_memory.exe schemas\\player-v1.mem "
            "build\\v1") != 0)
     return EXIT_FAILURE;
 
@@ -208,7 +198,7 @@ if (system("cl /nologo /TC /std:c11 /LD /Ibuild\\v1 engine.c "
     return EXIT_FAILURE;
 ```
 
-Repeat for v2 with its own include directory and output DLL. Use `GetFullPathNameW` (checking for failure or truncation) and `LoadLibraryW` to load the exact DLL you built. Resolve and check every required export. **Never load an output from a failed build** just because a stale DLL remains on disk. Use separate filenames so both DLLs can stay mapped and the build doesn't try to overwrite a loaded DLL.
+Repeat those calls in `memorymigration/main.c` for v2: use `schemas\\player-v2.mem` and `build\\v2` in the generator call, use `/Ibuild\\v2` and `/DPLAYER_HAS_AMMO` in the `cl` call, and write `build\\v2\\engine.obj` and `build\\v2\\engine_v2.dll`. Use `GetFullPathNameW` (checking for failure or truncation) and `LoadLibraryW` to load the exact DLL you built. Resolve and check every required export. **Never load an output from a failed build** just because a stale DLL remains on disk. Use separate filenames so both DLLs can stay mapped and the build doesn't try to overwrite a loaded DLL.
 
 First get the generator to emit the v2 example and print its layout from the host. Then generate v1 and confirm the same executable sees a different layout through the same exports.
 
@@ -226,16 +216,16 @@ The new engine knows how to initialize a block and how to use it. It never sees 
 
 ## 6. Diff the descriptions into a copy plan
 
-Do the diff **before** writing any bytes. Use stable region IDs, then stable field IDs within each matched region. A linear search is fine for the prototype. The plan can be an array of `{old_absolute_offset, new_absolute_offset, byte_count}` records in a small host-owned arena or a fixed-capacity array for this test.
+Do the diff **before** writing any bytes. Match region names, then field names within each matched region. Use `strcmp` on the name strings; the pointer values will differ across DLLs. A linear search is fine for the prototype. The plan can be an array of `{old_absolute_offset, new_absolute_offset, byte_count}` records in a small host-owned arena or a fixed-capacity array for this test.
 
 | Difference | Host action |
 | --- | --- |
-| Same region and field ID, same storage kind and size | Add a copy operation. Offsets may differ. |
+| Same region and field names, same storage kind and size | Add a copy operation. Offsets may differ. |
 | New field or new region | Leave the candidate's initialized value untouched. |
 | Removed field or region | No copy. |
-| Same ID with a changed kind or size | Fail this migration. Don't silently cast or treat equal-sized types as interchangeable. |
+| Same field name with a changed kind or size | Fail this migration. Don't silently cast or treat equal-sized types as interchangeable. |
 
-Check both descriptions: unique IDs, supported kinds, sane table counts, nonzero valid alignments, aligned addresses, and no out-of-bounds or overlapping region/field ranges in this scalar-only model. Use checks like `offset <= limit && size <= limit - offset` before adding sizes or offsets. Calculate absolute offsets only after validating the field is within its region and the region is within the actual block. If a description is invalid or the plan doesn't fit, discard the candidate; the old engine is still usable.
+Check both descriptions: unique, non-null names in each scope, supported kinds, sane table counts, nonzero valid alignments, aligned addresses, and no out-of-bounds or overlapping region/field ranges in this scalar-only model. Use checks like `offset <= limit && size <= limit - offset` before adding sizes or offsets. Calculate absolute offsets only after validating the field is within its region and the region is within the actual block. If a description is invalid or the plan doesn't fit, discard the candidate; the old engine is still usable.
 
 After validation, applying a plan entry is just:
 
@@ -251,10 +241,12 @@ memcpy(new_base + op.new_absolute_offset,
 
 Make this a one-shot test, not a live reload loop:
 
-1. v1 seeds `health = 37`, `speed = 2.5f`, and `Counter = 99` through its own typed code.
-2. The host can print the copy plan using IDs and byte offsets, but doesn't use the C field names or types directly.
-3. v2 verifies through its **normal engine index** that `hp = 37`, `speed = 2.5f`, `max_health = 100`, and `Counter = 99`. For the demo, a test-only verification export can return pass/fail. Make it check that the `Counter` region is also found at its new location.
-4. Test a deliberate kind mismatch under the same ID, and confirm that the host rejects it and v1 still reads the same values.
+1. v1 seeds `hp = 37` through its own typed code. v2 initializes `ammo = 12` in the candidate.
+2. The host prints the copy plan using the names and byte offsets from the metadata. It never uses `Player` as a C type or hard-codes the name `hp` in the diff.
+3. v2 verifies through its normal access path that `hp = 37` and `ammo = 12`. A test-only verification export can return pass/fail. On the prototype MSVC target, the copy plan should move four bytes from old offset 0 to new offset 4.
+4. Change v2 `hp` to `u32` and confirm that the host rejects the kind mismatch even though the size is unchanged. Check that v1 still reads 37 HP.
 5. On success, switch the active pair **`(DLL, block)`** together. Do not dispatch an old export with the new block or unload a DLL while any function pointer or layout table from it is still in use. Free the old allocation with `VirtualFree(old_base, 0, MEM_RELEASE)` only when it is no longer referenced.
 
 In a real reload you'll also need to stop engine calls and background work during the handoff. Leave that out of this test. If the one-shot version passes, you've proved the important boundary: **the engine interprets and indexes its state; the host only owns the pages and executes the diff.**
+
+Next: [07 · Migrate arrays between memory blocks](07-array-migration-tutorial.md).

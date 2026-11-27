@@ -3,6 +3,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="../generate_memory/generate_memory.vcxproj" />
-  <Project Path="memorymigration.vcxproj" />
+  <Project Path="../generate_memory/generate_memory.vcxproj" Id="56fa31c4-1ff1-441c-bc13-7cfe770d473b" />
+  <Project Path="memorymigration.vcxproj" Id="8fb8c45b-800f-4e42-a91b-b459d5a87af0" />
 </Solution>

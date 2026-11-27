@@ -1,4 +1,4 @@
-# From lexer tokens to a C struct AST and memory layout
+# 08 · From lexer tokens to a C struct AST and memory layout (optional)
 
 Your end goal has two parts: **discover which structs and fields the source declares**, then **determine where those fields sit in an object**. Keep those as separate passes. The parser reads syntax. The layout pass uses the target compiler's type sizes, alignments, and packing rules. Nothing in the text `int count;` tells the lexer its offset within a struct.
 
@@ -172,7 +172,7 @@ Store this separately from the AST at first. For example, a layout record can po
 
 ## 5. Use the compiler to check your work
 
-Put the real `struct Record` above this snippet in a separate C test file and compile it with the same compiler options as the layout you're predicting:
+In your scratch folder, create `record_layout_check.c`. Copy `struct Record` from section 1 into it, then append the complete snippet below. This is a standalone compiler check; don't add it to the parser build.
 
 ```c
 #include <stddef.h>
@@ -188,8 +188,15 @@ int main(void)
 }
 ```
 
-Compare these numbers with the layout pass, not the lexer offsets. Then change the field order or add a second struct and predict the new result before running the check again.
+In an x64 Native Tools Command Prompt, change to the scratch folder and run `cl /nologo /W4 /TC /std:c11 record_layout_check.c`, then `record_layout_check.exe`. This verifier uses C11's `_Alignof`; for MSVC in a mode that lacks it, use `__alignof(struct Record)` instead. With default MSVC x64 packing, expect:
+
+```text
+size=24 align=8
+tag=0 count=4 value=8 end=16
+```
+
+If the numbers differ, first check the field order, target, and packing flags, then compare these numbers with the layout pass, not the lexer offsets. Then change the field order or add a second struct and predict the new result before running the check again.
 
 **What to add next:** Try fixed-size arrays, then pointers, then fields that are another previously defined struct. At that point, you'll want a type representation richer than the three-value `TypeKind` and a lookup table for struct tags. Treat `#pragma pack`, explicit alignment, unions, and bit-fields as later features; don't silently claim correct offsets for input that uses rules you haven't modeled. If you plan to migrate memory between struct versions, record the layout for **each version separately**—matching field names do not imply matching offsets.
 
-Back to [the lexer tutorial](lexer-tutorial.md) or [the arena tutorial](arena-tutorial.md).
+Return to the main path at [05 · The `.mem` code generator](05-c-codegen-tutorial.md).

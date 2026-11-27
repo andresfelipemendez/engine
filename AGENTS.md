@@ -12,7 +12,7 @@ I am implementing this project myself. Your role is to teach me how to build it,
 
 I'm building a **data-oriented, cross-platform game engine in C99**, with hot-reloadable engine code and live migration of engine state across reloads. Use C99 for new examples by default. If an existing tutorial uses a later feature such as `_Alignof`, call it out and show a C99-compatible or platform-specific alternative when relevant. Keep platform-specific code behind a boundary: MSVC, `cl /LD`, DLLs, Visual Studio, and `VirtualAlloc` are the Windows prototype, not requirements for every platform.
 
-The C generator reads TOML and emits the engine memory declarations, shared API header, and layout metadata. The host owns the backing pages, but the engine owns the meaning and indexing of its state. On reload, the host reads the old and new modules' exported layout descriptions, diffs them, and migrates matching fields into a new block. The engine initializes and uses its own state normally; it does not implement the migration. Prove that flow in a one-shot test before introducing a live reload loop. This is the intended design, not a claim that it is all implemented.
+The C generator reads a tiny C-like `.mem` language (for example, `struct Player { i32 hp i32 ammo }`) and emits the engine memory declarations, shared API header, and layout metadata. The host owns the backing pages, but the engine owns the meaning and indexing of its state. On reload, the host reads the old and new modules' exported layout descriptions, diffs them, and migrates matching fields into a new block. The engine initializes and uses its own state normally; it does not implement the migration. Prove that flow in a one-shot test before introducing a live reload loop. This is the intended design, not a claim that it is all implemented.
 
 ## Where to look in this repository
 
@@ -20,8 +20,8 @@ The C generator reads TOML and emits the engine memory declarations, shared API 
 | --- | --- |
 | Development host and runtime DLL build | `devenv.c`, `build.c`, `build.bat`, and the DLL example `devenvlib.c` at the repository root. |
 | Platform boundary | `platform.h` for the interface; `msvc.c` for the current Windows implementation. |
-| Memory-migration prototype | `memorymigration/main.c`, `memorymigration/memorymigration.c`, and `memorymigration/memorymigration.h`. The Visual Studio entry point is `memorymigration/memorymigration.slnx`. Check `memorymigration/schemas/` for TOML fixtures and `memorymigration/generated/` for generated examples. |
-| TOML-to-C generator | `generate_memory/main.c` and `generate_memory/generate_memory.vcxproj`. `generate_memory/tomlc17.c` and `generate_memory/tomlc17.h` are the vendored parser, not the generator implementation. |
-| Learning material | `tutorials/` at the repository root, including `c-codegen-tutorial.md` and `dll-migration-tutorial.md`. |
+| Memory-migration prototype | `memorymigration/main.c`, `memorymigration/memorymigration.c`, and `memorymigration/memorymigration.h`. The Visual Studio entry point is `memorymigration/memorymigration.slnx`. Check `memorymigration/schemas/` for existing fixtures and `memorymigration/generated/` for generated examples; some predate the move to `.mem`. |
+| `.mem`-to-C generator | `generate_memory/main.c` and `generate_memory/generate_memory.vcxproj`. The earlier TOML prototype may still have vendored `tomlc17` files; the `.mem` tutorial does not depend on them. |
+| Learning material | `tutorials/README.md` for the numbered roadmap, including `tutorials/05-c-codegen-tutorial.md` and `tutorials/06-dll-migration-tutorial.md`. |
 
 Read the relevant source and project files before giving advice. The tutorials are exercises and design notes; when they differ from the checkout, distinguish what's already implemented from what I'm working toward.

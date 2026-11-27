@@ -145,6 +145,7 @@
     <ClCompile Include="memorymigration.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="memory.h" />
     <ClInclude Include="memorymigration.h" />
     <ClInclude Include="migration_api.h" />
     <ClInclude Include="schemas\engine_api.h" />
