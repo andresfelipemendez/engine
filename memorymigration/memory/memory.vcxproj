@@ -21,8 +21,8 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{56fa31c4-1ff1-441c-bc13-7cfe770d473b}</ProjectGuid>
-    <RootNamespace>generatememory</RootNamespace>
+    <ProjectGuid>{7332f684-5878-43c7-bb72-89d48667ebd9}</ProjectGuid>
+    <RootNamespace>memory</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -139,11 +139,10 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="main.c" />
-    <ClCompile Include="tomlc17.c" />
+    <ClInclude Include="memory.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="tomlc17.h" />
+    <ClCompile Include="memory.c" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
