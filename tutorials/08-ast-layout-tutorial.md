@@ -109,6 +109,7 @@ static FieldDecl *parse_field(Parser *p)
         !take(p, TOK_SEMICOLON, NULL))
         return NULL;
 
+    /* Allocate only after the field syntax matches; malformed input gets no node. */
     FieldDecl *field = arena_alloc(p->arena, sizeof *field,
                                    _Alignof(FieldDecl));
     if (field == NULL)
@@ -137,6 +138,7 @@ while (p->current.kind != TOK_RBRACE) {
     FieldDecl *field = parse_field(p);
     if (field == NULL)
         return NULL;
+    /* Write the tail link and advance it without reversing declaration order. */
     *link = field;
     link = &field->next;
 }
@@ -146,7 +148,7 @@ while (p->current.kind != TOK_RBRACE) {
 
 ## 4. Compute layout in a second pass
 
-Pick a target. For this exercise, use **MSVC x64 with default packing**. You can get the size and natural alignment of `char`, `int`, and `double` from `sizeof` and `_Alignof` **if your parser is compiled for the same target**. If you want your tool to analyze another target, pass it that target's type layout information instead of using the tool's own `sizeof`.
+Pick a target. For this exercise, use **MSVC x64 with default packing**. Microsoft's [x64 type and storage layout rules](https://learn.microsoft.com/en-us/cpp/build/x64-software-conventions#x64-type-and-storage-layout) give the member alignments and aggregate padding rules for that target. You can get the size and natural alignment of `char`, `int`, and `double` from `sizeof` and `_Alignof` **if your parser is compiled for the same target**. If you want your tool to analyze another target, pass it that target's type layout information instead of using the tool's own `sizeof`.
 
 Start with `cursor = 0` and `struct_alignment = 1`. For each field, in declaration order:
 
@@ -180,6 +182,7 @@ In your scratch folder, create `record_layout_check.c`. Copy `struct Record` fro
 
 int main(void)
 {
+    /* Use the compiler as an independent check on the hand-computed layout. */
     printf("size=%zu align=%zu\n", sizeof(struct Record),
            _Alignof(struct Record));
     printf("tag=%zu count=%zu value=%zu end=%zu\n",

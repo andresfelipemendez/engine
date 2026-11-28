@@ -6,28 +6,40 @@ There are two cases: **inline arrays**, whose elements live inside the struct, a
 
 ## 1. Inline arrays: copy elements, not the whole struct
 
-Create `array-migration-lab` outside the repository. Copy `migration_test.c` from [Step 01](01-first-memory-migration-test.md) into that folder as `inline_array_test.c`. Keep `copy_field`, but replace the two `Player` typedefs with these two declarations above it. Leave `.mem` and the DLLs alone for this checkpoint.
+Append the following to `memorymigration/memory_test/test.cpp` in the same Google Test project as [Step 01](01-first-memory-migration-test.md). Add `#include <stdint.h>` with the other includes. Reuse `copy_field` from `memory.lib`; leave `.mem` and the DLLs alone for this checkpoint.
 
-```c
-#include <stdint.h>
-
+```cpp
 typedef struct { int32_t scores[2]; } GameV1;
 typedef struct { int32_t scores[3]; } GameV2;
+
+TEST(ArrayMigration, PreservesDefaultInNewSlot)
+{
+    GameV1 old_game = {{10, 20}};
+    GameV2 new_game = {{-1, -1, -1}};
+    const MemoryBlock src = {(unsigned char *)&old_game, sizeof old_game};
+    const MemoryBlock dest = {(unsigned char *)&new_game, sizeof new_game};
+    /* Only two elements exist in the source; leave the new slot alone. */
+    const CopyOp op = {offsetof(GameV1, scores), offsetof(GameV2, scores),
+                       sizeof old_game.scores};
+
+    ASSERT_TRUE(copy_field(&src, &dest, op));
+    EXPECT_EQ(10, new_game.scores[0]);
+    EXPECT_EQ(20, new_game.scores[1]);
+    EXPECT_EQ(-1, new_game.scores[2]);
+}
 ```
 
-In `inline_array_test.c`, replace the scalar fixture in `main`: initialize a `GameV1` to `{ {10, 20} }` and a `GameV2` candidate to `{ {-1, -1, -1} }`. Build a `CopyOp` for `scores` using the offsets from both types and the live byte count below. Call `copy_field` and verify all three destination elements before returning success. The extra slot belongs to the new layout and retains its default.
-
-The field description for each version needs the **array offset within the struct**, the **element kind**, the **element stride** in bytes, and the **number of elements**. For an ordinary C array the stride is `sizeof(element)`. Use the generated C code to obtain the offset with `offsetof` and the count with `sizeof(array) / sizeof(array[0])` when `array` is the actual member, not a pointer. The host doesn't need `GameV1` or `GameV2` as C types.
+The field description for each version needs the **array offset within the struct**, the **element kind**, the **element stride** in bytes, and the **number of elements**. For a C array, elements are contiguous and the stride is `sizeof(element)` ([C99 §§6.2.5 and 6.5.3.4](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf)). Use the generated C code to obtain the offset with `offsetof` and the count with `sizeof(array) / sizeof(array[0])` when `array` is the actual member, not a pointer. The host doesn't need `GameV1` or `GameV2` as C types.
 
 For this exercise, explicitly allow a fixed array to grow or shrink: copy `min(old_count, new_count)` elements, leave new entries initialized, and drop trailing entries if the array shrank. If dropping game data isn't acceptable, reject shrinking instead. A changed element kind is an error even if both kinds occupy four bytes.
 
 For identical scalar elements, the copy can be one `memcpy`. Before computing the byte count, check that the stride is nonzero and `count <= SIZE_MAX / stride`. Then reuse the source and destination bounds checks from the single-field test. For the example, the copy is two `i32` elements, not three. The old array doesn't have a third element to read.
 
-**Checkpoint:** In an x64 Native Tools Command Prompt, change to `array-migration-lab` and run `cl /nologo /W4 /TC /std:c11 inline_array_test.c`, then `inline_array_test.exe`. Print the three destination scores: expect `10 20 -1`. If the last score changed, check that the byte count is based on the smaller element count, not on `sizeof(GameV2)`. Move `scores` within `GameV2` by placing an unrelated member before it. The test should still pass if you use the offsets from each layout. Also try changing `i32` to `u32` in the candidate and verify the migration rejects it.
+**Checkpoint:** Build the Google Test project and run `ArrayMigration.PreservesDefaultInNewSlot` in Test Explorer. Expect one pass. Temporarily use `sizeof new_game.scores` as the byte count. The copy should now be rejected because it requests three elements from a two-element source. Restore the original byte count. Kind validation belongs in the later metadata-driven copy planner, not this byte-copy helper.
 
 ## 2. Arena-backed arrays: move the contents and rebuild the reference
 
-Once inline arrays work, create `arena_array_test.c` next to `inline_array_test.c` as a separate scratch driver. Start with this reference type at the top of the file, above the test functions. Store a reference, not a C pointer, in persistent memory. In the later DLL experiment, put this type in the shared API header only if the host and both DLLs need to exchange it directly.
+Once inline arrays work, plan the arena-backed case as a separate test in the same project. Start with this reference type above the new case in `test.cpp`. Store a reference, not a C pointer, in persistent memory. In the later DLL experiment, put this type in the shared API header only if the host and both DLLs need to exchange it directly.
 
 ```c
 #include <stdint.h>

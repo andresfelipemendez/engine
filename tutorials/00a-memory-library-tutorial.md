@@ -6,13 +6,13 @@ Start here before Step 01. You'll build a C static library, link it into a Googl
 
 Open Visual Studio on Windows with **Desktop development with C++** and **Test Adapter for Google Test** installed. From the repository root, work under `memorymigration/`. Create a blank solution named `memory_unit_tests` there (check the location in the dialog). This keeps the exercises independent of `memorymigration.slnx`, whose legacy projects aren't needed. If you already have both projects, reuse them in the test solution via **Add → Existing Project** instead of creating duplicates. A `.vcxproj.user` file by itself is not a project.
 
-1. Add a **Static Library (C++)** project named `memory` at `memorymigration/memory/memory.vcxproj`. The template label doesn't require you to write C++. Remove template `.cpp` files from the project and set **C/C++ → Precompiled Headers → Not Using Precompiled Headers**. Use `.c` for implementation files; for those files, set **C/C++ → Advanced → Compile As → Compile as C Code (/TC)** and select `/std:c11` under **C/C++ → Language → C Language Standard**. The examples use C99 syntax; `/std:c11` is MSVC's compatible mode.
+1. Add a **Static Library (C++)** project named `memory` at `memorymigration/memory/memory.vcxproj`. The template label doesn't require you to write C++. Remove template `.cpp` files from the project and set **C/C++ → Precompiled Headers → Not Using Precompiled Headers**. Use `.c` for implementation files so the library follows C rules even though the test runner uses C++. See MSVC's [source file type options](https://learn.microsoft.com/en-us/cpp/build/reference/tc-tp-tc-tp-specify-source-file-type). For those files, set **C/C++ → Advanced → Compile As → Compile as C Code (/TC)** and select `/std:c11` under **C/C++ → Language → C Language Standard**. The examples use C99 syntax; `/std:c11` is MSVC's compatible mode.
 2. Use the existing Google Test project at `memorymigration/memory_test/memory_test.vcxproj`. In Solution Explorer, rename its display name to `memory_tests` if needed; the paths in these lessons use the checkout's `memory_test/` directory. If starting without that project, add a **Google Test Project** named `memory_tests` and use its `memory_tests/` directory for the test files instead. If prompted, select `memory` as the project under test, choose the static Google Test library and dynamic CRT. Keep the template's precompiled header, NuGet configuration and Google Test entry point.
 3. In the Google Test project, verify **References** contains `memory` (otherwise use **Add Reference**). Under **C/C++ → General → Additional Include Directories**, add `$(ProjectDir)..\memory`, retaining inherited values. Use matching runtimes across the projects and package (`/MDd` in Debug, `/MD` in Release for the dynamic CRT).
 
 ## 2. Add the first library function
 
-Open `memorymigration/memory/memory.h` in the `memory` project and replace the empty header with the following. This is the library header, not the separate prototype header at `memorymigration/memory.h`. `MemoryBlock` groups the base pointer and capacity without owning or copying the bytes. `Memory` is the header stored at byte zero. The C compiler skips the `extern "C"` guards; Google Test's C++ compiler sees them and links to the C symbol in `memory.lib`.
+Open `memorymigration/memory/memory.h` in the `memory` project and replace the empty header with the following. This is the library header, not the separate prototype header at `memorymigration/memory.h`. `MemoryBlock` groups the base pointer and capacity without owning or copying the bytes. `Memory` is the header stored at byte zero. The C compiler skips the `extern "C"` guards; Google Test's C++ compiler sees them and links to the C symbol in `memory.lib` (see [MSVC: `extern "C"` linkage](https://learn.microsoft.com/en-us/cpp/cpp/extern-cpp)).
 
 ```c
 #ifndef MEMORY_H
@@ -56,6 +56,7 @@ bool memory_init(MemoryBlock block)
     if (!block.base || block.capacity < sizeof(Memory))
         return false;
 
+    /* Reserve the header at byte zero; callers still own the backing bytes. */
     Memory *index = (Memory *)block.base;
     *index = (Memory){sizeof(Memory), block.capacity};
     return true;

@@ -56,6 +56,7 @@ bool memory_init(MemoryBlock block)
     size_t cursor = sizeof(Memory);
     const size_t stride = sizeof(Marker);
     const size_t padding = (stride - cursor % stride) % stride;
+    /* Check the whole layout before writing even the first region. */
     if (padding > block.capacity - cursor ||
         REGION_COUNT > (block.capacity - cursor - padding) / stride)
         return false;
@@ -65,6 +66,7 @@ bool memory_init(MemoryBlock block)
     unsigned char *bytes = block.base;
     for (size_t i = 0; i < REGION_COUNT; ++i) {
         index->regions[i] = (Region){cursor, stride};
+        /* Distinct values expose a lookup that lands in the wrong slot. */
         *(Marker *)(bytes + cursor) = (Marker){10 * (1 + (int)i)};
         cursor += stride;
     }
@@ -81,7 +83,7 @@ const Region *memory_find_region(const Memory *index, RegionType type)
 }
 ```
 
-The fit check happens before writing anything. `malloc` supplies a suitably aligned base for this fixture; a multiple of `sizeof(Marker)` keeps the markers on valid array-style strides without C11 `_Alignof`. For heterogeneous regions, align each region separately. Lookup checks the slot, not the entry's byte range; use it on a successfully initialized block.
+The fit check happens before writing anything. [`malloc` supplies a suitably aligned base](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf) (C99 §7.20.3) for this fixture; a multiple of `sizeof(Marker)` keeps the markers on valid array-style strides without C11 `_Alignof`. For heterogeneous regions, align each region separately. Lookup checks the slot, not the entry's byte range; use it on a successfully initialized block.
 
 ## 3. Look up `Game` in a unit test
 
@@ -109,6 +111,7 @@ static void CheckGameSlot(MemoryBlock block)
     ASSERT_EQ(sizeof(Marker), game->size);
     ASSERT_LE(game->size, block.capacity - game->offset);
 
+    /* Add the offset to a byte pointer, not to the Memory pointer. */
     const unsigned char *bytes = block.base;
     const Marker *marker = (const Marker *)(bytes + game->offset);
     EXPECT_EQ(20, marker->value);
@@ -147,4 +150,4 @@ Keep these exercises in the same two projects. Put the C helpers in `memory.c`, 
 - **Strings:** Store references as `{offset, length}`, not pointers. For a downward-growing pool, require `front <= back <= capacity` and `length < back - front` before reserving `length + 1` bytes for text and its terminator. With capacity 256, appending `door` then `open` should produce offsets 251 and 246. Add a separate case where the text would exactly fill the gap without its terminator; expect rejection and unchanged cursors. Resolve references only within the occupied pool and check that the terminator is inside the block. Migration must copy the string bytes and install a new reference, not copy the old offset.
 - **Sub-arenas:** Reserve non-overlapping, suitably aligned ranges by advancing the root `front`. Store each range's block-relative start, capacity, and local cursor. Test that allocations in one range don't move another's cursor or the root cursor. Persistent references must not point into scratch space that can be reset.
 
-Next: [03 · Arena allocation](03-arena-tutorial.md). Revisit sub-arenas before [07 · Array migration](07-array-migration-tutorial.md).
+Next: [02a · Describe a live block without exposing its index](02a-live-layout-tutorial.md). Revisit sub-arenas before [07 · Array migration](07-array-migration-tutorial.md).

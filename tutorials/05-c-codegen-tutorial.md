@@ -8,7 +8,7 @@ Player.mem → lexer → parser → structs and fields → generated C → cl /L
 
 ## Prerequisites
 
-Finish [04 · Lexer](04-lexer-tutorial.md). Create `codegen-lab` outside the repository and copy your working `lexer.h` and `lexer.c` into it. Keep the existing TOML prototype in `generate_memory/main.c` untouched while you build the scratch version.
+Finish [04 · Lexer](04-lexer-tutorial.md). Create `codegen-lab` outside the repository and copy your working `lexer.h` and `lexer.c` into it. Build this scratch version independently of any legacy generator project.
 
 ## 1. Create two input fixtures
 
@@ -43,9 +43,9 @@ Leave defaults and numeric field IDs out of the grammar for now. The engine init
 
 ## 2. Teach the lexer just three new tokens
 
-Start from the [lexer tutorial](04-lexer-tutorial.md). In the scratch `lexer.h`, add `TOK_KW_STRUCT`, `TOK_LBRACE`, and `TOK_RBRACE` to `TokenKind`. In the scratch `lexer.c`, teach the keyword classifier about `struct` and add `{` and `}` to the punctuation switch. The lexer should return `i32`, `hp`, and `Player` as `TOK_IDENTIFIER`. It already knows digits are allowed after the first letter of an identifier.
+Start from the [lexer tutorial](04-lexer-tutorial.md). In the scratch `lexer.h`, add `TOK_KW_STRUCT`, `TOK_LBRACE`, and `TOK_RBRACE` to `TokenKind`. In the scratch `lexer.c`, add `if (length == 6 && memcmp(text, "struct", 6) == 0) return TOK_KW_STRUCT;` to `name_kind` before its fallback. In the `lexer_next` punctuation switch, add `case '{': return token(lex, TOK_LBRACE, start);` and `case '}': return token(lex, TOK_RBRACE, start);`. The lexer should return `i32`, `hp`, and `Player` as `TOK_IDENTIFIER`. It already knows digits are allowed after the first letter of an identifier.
 
-Copy `lexer_demo.c` from `lexer-lab` into `codegen-lab`. In its `kind_name` switch, add labels `KW_STRUCT`, `LBRACE`, and `RBRACE` for the new token kinds. In its `main`, replace the input literal with `"struct Player { i32 hp }"`. From `codegen-lab` in the x64 Native Tools Command Prompt, run `cl /nologo /W4 /TC /std:c11 lexer.c lexer_demo.c /Fe:lexer_demo.exe` and then `lexer_demo.exe`. Ignoring the byte spans, the v1 dump should show:
+When stepping through the parser test in the next section, feed the scanner `struct Player { i32 hp }` to isolate lexer problems. Ignore byte spans at first; successive calls to `lexer_next` should produce:
 
 ```text
 KW_STRUCT   struct
@@ -61,7 +61,7 @@ Test `struct Player { i23 hp }` too. That is valid **tokenization**; `i23` is ju
 
 ## 3. Parse one struct in `generate_memory.c`
 
-Create `codegen-lab/generate_memory.c` beside `lexer.c`. Start it with the includes, types, and helpers below, then append a test `main` after `parse_struct`.
+Create `codegen-lab/generate_memory.c` beside `lexer.c`. Start it with the includes, types, and helpers below, then add the shared parser entry point and Google Test checkpoint below.
 
 The AST can be two nested arrays. Store name tokens as byte spans into the source buffer, and keep that buffer alive until you finish writing the output. A fixed limit is fine for a first tool; diagnose exceeding it rather than writing past the array.
 
@@ -89,6 +89,7 @@ typedef struct {
 
 static int take(Parser *p, TokenKind kind, Token *out)
 {
+    /* Keep the unexpected token current so the caller can report its span. */
     if (p->current.kind != kind)
         return 0;
     if (out != NULL)
@@ -100,6 +101,7 @@ static int take(Parser *p, TokenKind kind, Token *out)
 static int spelling_is(const char *source, Token t, const char *word)
 {
     size_t length = strlen(word);
+    /* A token is a span, not a separately terminated string. */
     return t.length == length && memcmp(source + t.start, word, length) == 0;
 }
 
@@ -129,6 +131,7 @@ static int parse_struct(Parser *p, StructDecl *out)
         return 0;
 
     while (p->current.kind != TOK_RBRACE) {
+        /* Stop at a missing closing brace or before indexing past fields[]. */
         if (p->current.kind == TOK_EOF || out->field_count == 32)
             return 0;
         if (!parse_field(p, &out->fields[out->field_count]))
@@ -141,46 +144,41 @@ static int parse_struct(Parser *p, StructDecl *out)
 }
 ```
 
-In `generate_memory.c`, add `#include <stdio.h>` and `#include <stdlib.h>` beside the other includes. Append this temporary `main` below `parse_struct`. The first `lexer_next` primes the parser's lookahead; checking for EOF ensures the parser didn't just accept a prefix.
+In `generate_memory.c`, add `#include <stdio.h>` and `#include <stdlib.h>` beside the other includes. Append the following below `parse_struct` so the string fixture and the later file path use the same parser. The first `lexer_next` primes lookahead; checking EOF prevents accepting merely a valid prefix.
 
 ```c
-int main(void)
+static int parse_schema(const char *source, size_t length, StructDecl *out)
 {
-    const char source[] = "struct Player { i32 ammo i32 hp }";
     Parser p = {0};
-    p.lex = (Lexer){source, sizeof(source) - 1, 0};
+    p.lex = (Lexer){source, length, 0};
     p.current = lexer_next(&p.lex);
+    return parse_struct(&p, out) && p.current.kind == TOK_EOF;
+}
+
+#ifdef CODEGEN_TEST
+int schema_field_count(const char *source, size_t length)
+{
     StructDecl decl;
-    if (!parse_struct(&p, &decl) || p.current.kind != TOK_EOF) {
-        fprintf(stderr, "parse failed at byte %zu\n", p.current.start);
-        return EXIT_FAILURE;
-    }
-    printf("Struct %.*s\n", (int)decl.name.length, source + decl.name.start);
-    for (size_t i = 0; i < decl.field_count; ++i) {
-        const FieldDecl field = decl.fields[i];
-        printf("  %s %.*s\n", field.type == SCHEMA_I32 ? "i32" : "u32",
-               (int)field.name.length, source + field.name.start);
-    }
-    return EXIT_SUCCESS;
+    return parse_schema(source, length, &decl) ? (int)decl.field_count : -1;
+}
+#endif
+```
+
+Add `codegen-lab/lexer.c` and `codegen-lab/generate_memory.c` to `memory_tests` as **Existing Items**. For those two files use `/TC /std:c11` and no precompiled header. Set `CODEGEN_TEST` in the **file-level** preprocessor definitions for `generate_memory.c`. Append to `memorymigration/memory_test/test.cpp`:
+
+```cpp
+extern "C" int schema_field_count(const char *, size_t);
+
+TEST(SchemaParser, ParsesStringAndRejectsUnknownKind)
+{
+    const char good[] = "struct Player { i32 ammo i32 hp }";
+    const char bad[] = "struct Player { i23 ammo i32 hp }";
+    EXPECT_EQ(2, schema_field_count(good, sizeof good - 1));
+    EXPECT_EQ(-1, schema_field_count(bad, sizeof bad - 1));
 }
 ```
 
-Save both C files. In an x64 Native Tools Command Prompt, change to `codegen-lab` and run:
-
-```cmd
-cl /nologo /W4 /TC /std:c11 lexer.c generate_memory.c /Fe:parse_demo.exe
-parse_demo.exe
-```
-
-Expect:
-
-```text
-Struct Player
-  i32 ammo
-  i32 hp
-```
-
-Change the first `i32` in the string literal to `i23`; the program should report a parse failure at that token. If valid input fails at byte zero, inspect the first token: it should be `TOK_KW_STRUCT`, not `TOK_IDENTIFIER`. Restore `i32` before continuing. Then give distinct errors for a missing closing brace, an unknown type, and a missing field name. Once the one-struct driver works, add a fixed-capacity array of `StructDecl` at file scope and repeat `parse_struct` until EOF. Before generating C, reject duplicate struct names and duplicate field names in a struct, C keywords or reserved names, collisions with your generated symbols, and names longer than a limit such as 63 bytes.
+Build `memory_tests` and run `SchemaParser` in Test Explorer. Expect one pass. If valid input is rejected at byte zero, inspect the first token: it should be `TOK_KW_STRUCT`, not `TOK_IDENTIFIER`. Keep this narrow parser until the one-struct file fixture works. Before accepting general schemas, add validation for duplicate names, reserved identifiers, generated-symbol collisions, and names beyond your chosen limit.
 
 ## 4. Emit `memory.h` one line at a time
 
@@ -199,7 +197,7 @@ typedef struct {
 } EngineMemory;
 ```
 
-In `codegen-lab/generate_memory.c`, insert `emit_struct` below `parse_struct` and above `main` (`<stdio.h>` is already included). Once you validate the name length, use `%.*s` with the token's length to print its spelling without allocating a NUL-terminated copy. Call `emit_struct(stdout, source, &decl)` after successful parsing to check one emitted typedef before you start opening output files. Then call it once per struct and emit `EngineMemory` from the same struct list:
+In `codegen-lab/generate_memory.c`, insert `emit_struct` below `parse_struct` and above `main` (`<stdio.h>` is already included). Once you validate the name length, use `%.*s` with the token's length to print its spelling without allocating a NUL-terminated copy. The build tool below calls it once per struct and emits `EngineMemory` from the same struct list:
 
 ```c
 /* Keep the spelling and the migration kind together so both emitters agree. */
@@ -251,6 +249,8 @@ Keep fields in declaration order. Don't open the outputs until parsing and valid
 
 ## 5. Emit the tables and shared API
 
+Generate expressions such as `offsetof(Player, hp)` rather than calculating padding in the generator. The compiler that builds each DLL then measures the layout it actually uses; [`offsetof` returns the member's byte offset](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf) (C99 §7.17). This is why you can reorder the fixture and see the metadata follow the declaration.
+
 This field table is the other required output of the DSL. `memory.h` lets engine code use fields normally; `memory_layout.inc` lets the host inspect the layout using data rather than C member names baked into the host. That's **generated reflection metadata**: the compiler checks and measures the declared fields, and the DLL exposes a table you can inspect at runtime. It is not built-in C reflection and describes only the types in your schema.
 
 ### Task 1: Emit one field table per struct, then the region table
@@ -291,7 +291,7 @@ static int emit_layout_tables(FILE *out, const char *source,
 }
 ```
 
-For the first check, replace everything after the successful parse check in the temporary `main` (the `printf`, field-printing loop, and final return) with `return emit_layout_tables(stdout, source, &decl, 1) ? EXIT_SUCCESS : EXIT_FAILURE;`. Rebuild with the `parse_demo.exe` command in §3 and run it from `codegen-lab`. With the original v2 input, expect:
+When you run the file-based generator below, the v2 layout table should contain these rows. The Google Test checkpoint compiles them and asserts the resulting values:
 
 ```c
 static const FieldLayout fields_Player[] = {
@@ -308,13 +308,13 @@ static const RegionLayout regions[] = {
 
 ### Task 2: Assemble a complete `memory_layout.inc`
 
-From `codegen-lab`, create `templates/`. Use the complete `memory_layout.inc` example in [Tutorial 06, §3](06-dll-migration-tutorial.md#3-return-a-layout-from-inside-the-dll) to make these two plain-text files:
+From `codegen-lab`, create `templates/`. Use the complete `memory_layout.inc` example in [Tutorial 06, §3](06-dll-migration-tutorial.md#3-return-a-layout-from-inside-the-dll) to make these three plain-text files:
 
 | Template file | Exact contents to copy |
 | --- | --- |
 | `templates/memory_layout_prefix.inc` | The three `#include` lines and the three macros, from `#include "engine_api.h"` through the closing line of `#define REGION`. |
-| `templates/memory_layout_suffix.inc` | Everything from the definition of `engine_api_version` through `#undef COUNT`. |
-| `templates/engine_api.h` | The whole ABI header code block in [Tutorial 06, §1](06-dll-migration-tutorial.md#1-give-the-host-and-dll-a-small-stable-api). |
+| `templates/memory_layout_suffix.inc` | Everything from `#ifndef ENGINE_LAYOUT_EXPORT` through `#undef COUNT`. |
+| `templates/engine_api.h` | Copy the planner's `memorymigration/memory/engine_api.h` from [Step 01a](01a-copy-plan-tutorial.md). Add `#define ENGINE_API_VERSION 1u` after `<stdint.h>` in the template and in the planner header, so both use the same version. |
 
 End each template with a newline. **Do not copy either sample table** into the templates: `emit_layout_tables` writes those. The ABI header is a fixed template because the host-side types must not change when you add an engine field.
 
@@ -365,7 +365,7 @@ static int write_layout_file(const char *path, const char *source,
 }
 ```
 
-To try assembly with the string fixture first, from `codegen-lab` create `build\v2`. In the temporary `main`, replace the stdout call with `return write_layout_file("build/v2/memory_layout.inc", source, &decl, 1) ? EXIT_SUCCESS : EXIT_FAILURE;`. Rebuild and run `parse_demo.exe`. Open the output file: the macros should be first, then the two tables, then `engine_describe_layout`. If a template cannot open, check that you ran from `codegen-lab`, not `build\v2`. The next task gives the generated file its companion headers so you can compile it.
+The next checkpoint calls this writer from the generator build tool. When inspecting its output, expect the macros first, then the two tables, then `engine_describe_layout`. If a template cannot open, check that the generator ran from `codegen-lab`.
 
 ## 6. Wire the steps together
 
@@ -406,7 +406,44 @@ static int write_outputs(const char *dir, const char *source,
 }
 ```
 
-Once you've validated the string fixture, change the test entry point to `int main(int argc, char **argv)`. Require `argc == 3`: read the schema from `argv[1]` into a buffer (open in binary mode) and pass that buffer and its length to `Parser`. After parsing and validation, call `write_outputs(argv[2], source, &decl, 1)` for the single-struct fixture, or pass your declaration array and its count after you add support for multiple structs. Convert the result to `EXIT_SUCCESS` or `EXIT_FAILURE`. Keep the source buffer alive until writing finishes; the token spans still refer to it. Don't compile the generated files if the generator returns failure.
+Append this file reader and build-tool entry point to `codegen-lab/generate_memory.c`, after `write_outputs`. `CODEGEN_TEST` excludes the build-tool entry point from the Google Test build. The lexer uses a byte count, not a terminating zero. The extra byte makes the size-limit check unambiguous: exactly 4096 bytes fit; 4097 do not. The source stays in scope through emission because each token stores a span into it. [`fread` counts items actually read](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/fread); with item size 1 that count is bytes. Check `ferror` separately so a failed read is not mistaken for a short file.
+
+```c
+#ifndef CODEGEN_TEST
+static int read_schema(const char *path, char *buffer, size_t capacity,
+                       size_t *length)
+{
+    FILE *file = fopen(path, "rb");
+    if (!file)
+        return 0;
+    size_t n = fread(buffer, 1, capacity, file);
+    int ok = !ferror(file) && n < capacity;
+    if (fclose(file) != 0)
+        ok = 0;
+    if (ok)
+        *length = n;
+    return ok;
+}
+
+int main(int argc, char **argv)
+{
+    char source[4097];
+    size_t length = 0;
+    StructDecl decl;
+    if (argc != 3 || !read_schema(argv[1], source, sizeof source, &length)) {
+        fputs("usage: generate_memory <readable schema, max 4096 bytes> <output dir>\n", stderr);
+        return EXIT_FAILURE;
+    }
+    if (!parse_schema(source, length, &decl)) {
+        fputs("invalid .mem schema\n", stderr);
+        return EXIT_FAILURE;
+    }
+    return write_outputs(argv[2], source, &decl, 1) ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+#endif
+```
+
+This first build tool handles the single-struct fixture. Add multiple declarations and identifier validation as separate parser checkpoints before accepting general schemas.
 
 From `codegen-lab` in the x64 Native Tools Command Prompt, rebuild and run (skip any `mkdir` for a directory you already created):
 
@@ -423,52 +460,61 @@ If a command can't open an input, template, or output, check that you're in `cod
 
 ## 7. Compile the generated tables and read them back
 
-Create `codegen-lab/check_layout.c` with the following contents. It compiles the same generated `.inc` the DLL will include, but calls `engine_describe_layout` directly so you can test generation without loading a DLL. The printing loop reads names, kinds, offsets, and sizes from the table; it never names a `Player` member in C.
+In `codegen-lab/generated_v1.c`, include the generated table under fixture-specific function names. In `generated_v2.c`, use `generated_version_v2`, `generated_layout_v2`, and `build/v2/memory_layout.inc` instead. Compile both as C (`/TC /std:c11`), with precompiled headers disabled for these two files, by adding them as **Existing Items** to `memory_tests`. Keep them in `codegen-lab` so the relative includes find their outputs. Two translation units keep incompatible `Player` definitions out of the same C file.
 
 ```c
-#include "memory_layout.inc"
-#include <inttypes.h>
-#include <stdio.h>
-#include <stdlib.h>
+/* Link these as ordinary test functions, not DLL exports. */
+#define ENGINE_LAYOUT_EXPORT
+#define engine_api_version generated_version_v1
+#define engine_describe_layout generated_layout_v1
+#include "build/v1/memory_layout.inc"
+```
 
-int main(void)
+Append this test and the two declarations to `memorymigration/memory_test/test.cpp`. It asserts what the disk fixtures generated, then substitutes those descriptions for the hand-written ones from Step 01a. The test uses integer arrays as backing fixtures for this fixed MSVC x64 case; the offsets are asserted before copying.
+
+```cpp
+extern "C" int __cdecl generated_layout_v1(const void *, EngineLayout *);
+extern "C" int __cdecl generated_layout_v2(const void *, EngineLayout *);
+
+TEST(GeneratedLayout, FileFixturesDriveTheSamePlanner)
 {
-    EngineLayout layout = {0};
-    if (!engine_describe_layout(NULL, &layout))
-        return EXIT_FAILURE;
+    EngineLayout a = {0}, b = {0};
+    ASSERT_TRUE(generated_layout_v1(NULL, &a));
+    ASSERT_TRUE(generated_layout_v2(NULL, &b));
+    ASSERT_EQ(1u, a.region_count);
+    ASSERT_EQ(1u, b.region_count);
+    ASSERT_EQ(1u, a.regions[0].field_count);
+    ASSERT_EQ(2u, b.regions[0].field_count);
+    EXPECT_STREQ("Player", a.regions[0].name);
+    EXPECT_STREQ("Player", b.regions[0].name);
+    EXPECT_STREQ("hp", a.regions[0].fields[0].name);
+    EXPECT_STREQ("hp", b.regions[0].fields[1].name);
+    EXPECT_EQ(STORAGE_I32, a.regions[0].fields[0].kind);
+    EXPECT_EQ(STORAGE_I32, b.regions[0].fields[1].kind);
+    EXPECT_EQ(sizeof(int32_t), a.regions[0].fields[0].size);
+    EXPECT_EQ(sizeof(int32_t), b.regions[0].fields[1].size);
+    EXPECT_EQ(0u, a.regions[0].fields[0].offset);
+    EXPECT_EQ(sizeof(int32_t), b.regions[0].fields[1].offset);
 
-    for (uint32_t i = 0; i < layout.region_count; ++i) {
-        const RegionLayout *region = &layout.regions[i];
-        for (uint32_t j = 0; j < region->field_count; ++j) {
-            const FieldLayout *field = &region->fields[j];
-            printf("%s.%s kind=%" PRIu32 " offset=%" PRIu64 " size=%" PRIu64 "\n",
-                   region->name, field->name, field->kind,
-                   field->offset, field->size);
-        }
-    }
-    return EXIT_SUCCESS;
+    int32_t old_values[] = {37}, new_values[] = {12, 0};
+    ASSERT_EQ(sizeof old_values, a.block_size);
+    ASSERT_EQ(sizeof new_values, b.block_size);
+    const MemoryBlock src = {(unsigned char *)&old_values, sizeof old_values};
+    const MemoryBlock dest = {(unsigned char *)&new_values, sizeof new_values};
+    CopyOp op = {0};
+    size_t count = 0;
+    ASSERT_TRUE(build_copy_plan(&a, &b, &op, 1, &count));
+    ASSERT_EQ(1u, count);
+    ASSERT_TRUE(copy_field(&src, &dest, op));
+    EXPECT_EQ(37, new_values[1]);
+    EXPECT_EQ(12, new_values[0]);
 }
 ```
 
-From `codegen-lab` in the same prompt, compile the checker once per output directory:
-
-```cmd
-cl /nologo /W4 /TC /std:c11 /Ibuild\v1 check_layout.c /Fe:build\check_v1.exe
-build\check_v1.exe
-cl /nologo /W4 /TC /std:c11 /Ibuild\v2 check_layout.c /Fe:build\check_v2.exe
-build\check_v2.exe
-```
-
-Expected on MSVC x64, with v1 first and then v2:
-
-```text
-Player.hp kind=1 offset=0 size=4
-Player.ammo kind=1 offset=0 size=4
-Player.hp kind=1 offset=4 size=4
-```
+Build `memory_tests` and run `GeneratedLayout.FileFixturesDriveTheSamePlanner` in Test Explorer. Expect one pass. As a file-input failure check, create a third fixture by replacing `i32` with `i23`, and run the generator on it into an empty output directory. Expect a nonzero exit status and no generated files; don't compile stale outputs after a failed invocation.
 
 `hp` keeps its name and storage kind but moves from offset `0` to `4`. This checkpoint uses the generated `EngineMemory` aggregate as its whole block, so `REGION` can measure placement with `offsetof`. When you wire it into the [byte-zero `Memory` index](02-memory-index-tutorial.md), keep the generated **field** tables but take each **region's block offset** from that DLL's index. An offset measured in the aggregate does not describe a region placed after the index.
 
-If both builds report the same `hp` offset, check the `/I` paths and make sure no generated files are sitting beside `check_layout.c` and shadowing the selected version. If the compiler reports an unknown `region_Player` or `fields_Player`, check that the region member and table prefixes agree between both emission loops.
+If both builds report the same `hp` offset, check the wrapper include paths and regenerate both schema outputs. If the compiler reports an unknown `region_Player` or `fields_Player`, check that the region member and table prefixes agree between both emission loops.
 
-Next: [06 · One-shot DLL migration](06-dll-migration-tutorial.md). Instead of calling `engine_describe_layout` directly, the host calls it in each DLL and compares the two tables to build the copy plan.
+Next: [06 · One-shot DLL migration](06-dll-migration-tutorial.md). First resolve the fixed-layout export in one DLL. Then use the live-layout exports in two DLLs and reuse the planner.

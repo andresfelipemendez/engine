@@ -5,15 +5,18 @@ bool memory_init(MemoryBlock block) {
 		return false;
 
 	Memory* index = (Memory*)block.base;
-	*index = (Memory){ sizeof(Memory), block.capacity };
+	*index = (Memory){
+		.front = sizeof(Memory), 
+		.back = block.capacity
+	};
 	return true;
 }
 
 bool copy_field(const MemoryBlock* src, const MemoryBlock* dest, CopyOp op) {
-	if (op.old_offset > src->capacity || op.size > src->capacity - op.old_offset ||
-		op.new_offset > dest->capacity || op.size > dest->capacity - op.new_offset)
+	if (op.src_offset > src->capacity || op.size > src->capacity - op.src_offset ||
+		op.dest_offset > dest->capacity || op.size > dest->capacity - op.dest_offset)
 		return false;
 
-	memcpy(dest->base + op.new_offset, src->base + op.old_offset, op.size);
+	memcpy(dest->base + op.dest_offset, src->base + op.src_offset, op.size);
 	return true;
 }

@@ -38,8 +38,8 @@ typedef struct {
 } StringRef;
 
 typedef struct {
-	size_t old_offset;
-	size_t new_offset;
+	size_t src_offset;
+	size_t dest_offset;
 	size_t size;
 } CopyOp;
 

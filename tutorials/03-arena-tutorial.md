@@ -58,9 +58,11 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment)
 
     size_t remaining = arena->capacity - arena->used;
     unsigned char *cursor = arena->base + arena->used;
+    /* Align the actual address; the base need not meet this alignment. */
     size_t misalignment = (uintptr_t)cursor % alignment;
     size_t padding = misalignment ? alignment - misalignment : 0;
 
+    /* Failure must leave the cursor available to the next request. */
     if (padding > remaining || size > remaining - padding)
         return NULL;
 
@@ -69,7 +71,7 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment)
 }
 ```
 
-Say the base is 8-byte aligned and the file buffer uses 101 bytes. An 8-byte-aligned allocation starts at offset 104, not 101. Compute padding from the **address** rather than just the offset so this also works with a base address that isn't already aligned for the requested type. Check capacity before moving the cursor: a failed allocation leaves `used` unchanged.
+Say the base is 8-byte aligned and the file buffer uses 101 bytes. An 8-byte-aligned allocation starts at offset 104, not 101. This prototype uses `uintptr_t` to inspect address alignment on its target. [C99 §7.18.1.4](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf) defines this optional integer type by its ability to round-trip a `void *`. Compute padding from the **address** rather than just the offset so this also works with a base address that isn't already aligned for the requested type. Check capacity before moving the cursor: a failed allocation leaves `used` unchanged.
 
 ### Task 3: Call the allocator from `arena_demo.c`
 
@@ -91,6 +93,7 @@ int main(void)
 
     Arena arena;
     arena_init(&arena, block, 32);
+    /* Three bytes force the next aligned allocation to skip padding. */
     unsigned char *text = arena_alloc(&arena, 3, 1);
     unsigned char *slot = arena_alloc(&arena, 8, 8);
     size_t mark = arena.used;

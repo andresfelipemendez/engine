@@ -96,6 +96,7 @@ static Token token(const Lexer *lex, TokenKind kind, size_t start)
 
 static TokenKind name_kind(const char *text, size_t length)
 {
+    /* Check the length first so a short token cannot cause an overread. */
     if (length == 3 && memcmp(text, "int", 3) == 0)
         return TOK_KW_INT;
     if (length == 6 && memcmp(text, "extern", 6) == 0)
@@ -104,7 +105,7 @@ static TokenKind name_kind(const char *text, size_t length)
 }
 ```
 
-The name classifier checks the **length and contents**. The characters in a token are not necessarily followed by `\0`, so don't use `strcmp` on a slice of the source. Consume the whole identifier before classifying it: otherwise `integer` could incorrectly become `int` plus `eger`.
+The name classifier checks the **length and contents**. The characters in a token are not necessarily followed by `\0`, so use [`memcmp`](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/memcmp-wmemcmp), which compares a fixed count of bytes, rather than `strcmp`, which expects terminated strings. Consume the whole identifier before classifying it: otherwise `integer` could incorrectly become `int` plus `eger`.
 
 ## 3. Implement `lexer_next` (`lexer.c`, continued)
 
@@ -127,6 +128,7 @@ Token lexer_next(Lexer *lex)
             c = peek(lex, 0);
         } while (is_name_start(c) || is_digit(c));
 
+        /* Classify after consuming the full word: integer is not int. */
         TokenKind kind = name_kind(lex->source + start, lex->pos - start);
         return token(lex, kind, start);
     }

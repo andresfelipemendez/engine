@@ -1,118 +1,20 @@
 # 06 · Migrate opaque engine memory between two DLL builds
 
-Use `memorymigration.slnx` to build **one host executable**. At runtime, `main.c` calls a C generator for your `.mem` language and then `cl /LD`, just like the engine's `devenv.c` calls `cl`. The generator produces **`memory.h` and layout metadata**, not a version-specific migration function. The host loads a v1 DLL and a v2 DLL in one run, asks each for its layout, and migrates the block by comparing those descriptions. You don't need a file watcher or a reload loop to test this.
-
-## Prerequisites
-
-- Finish the [`.mem` generator checkpoint](05-c-codegen-tutorial.md) and open an x64 Native Tools Command Prompt.
-- For the integration steps below, use `memorymigration/` as the working directory. This lesson describes what you'll add, not what's already wired: the current `main.c` runs the scalar test and has a partial memory-index helper. Keep your scratch fixtures separate so you can rerun them.
-- In `memorymigration/`, prepare `schemas/player-v1.mem`, `schemas/player-v2.mem`, and `engine.c` (the DLL source, separate from the host's `main.c`). Put your built generator at `build/generate_memory.exe` and create the `build/v1` and `build/v2` directories before invoking it.
-
-| Owner | Responsibility |
-| --- | --- |
-| Host | Reserves and commits pages with `VirtualAlloc`, loads the DLLs, validates and diffs layout descriptions, copies bytes, and switches the active DLL and block. |
-| Engine DLL | Defines its persistent C types, decides where its regions go, and uses its own `Memory` index to access them. Exposes layout metadata but **does not** implement v1-to-v2 migration. |
-| Generator | Reads the `.mem` schema and emits `engine_api.h`, `memory.h`, and the C layout tables and exports. |
-
-**Opaque doesn't mean the host can't copy the bytes.** It means the host never includes `memory.h`, casts the block to `Engine *`, or needs to know that a field represents health or speed. It operates on names, byte ranges, and storage kinds supplied by the DLL.
+Complete [the copy planner](01a-copy-plan-tutorial.md), [live region placement](02a-live-layout-tutorial.md), and [generated tables](05-c-codegen-tutorial.md). This is a Windows x64 **Google Test integration** exercise: load one DLL first, then migrate between two. The test project is the host; there is no new console app or reload loop.
 
 ## 1. Give the host and DLL a small, stable API
 
-Generate `engine_api.h` alongside the other outputs. For now the generator always emits the same ABI-1 declarations below; the `.mem` language does not need a version directive. **Changing fields must not change the format the host uses to read layout tables.** Put schema-specific declarations in each DLL's generated `memory.h`, not in the shared ABI.
+Use the `engine_api.h` types from Step 01a with `ENGINE_API_VERSION` set to `1u` as in Step 05. The host and DLL must agree on the shared types and calling convention. Neither the host nor the planner includes a generated `memory.h`. That name belongs to a specific build's private declarations in its output folder.
 
-Generate `engine_api.h` **before Visual Studio compiles the host** (run the generator manually first, then automate it if you want). The host cannot include a header that only gets generated when the executable runs. At runtime each schema generation can emit its own copy of `engine_api.h` into that DLL's output folder. Compile both DLLs and the host as x64 using matching ABI conventions.
-
-Start with plain arrays. This is a flattened form of your layout AST: a root contains regions, each region contains fields. It's **compiled layout metadata**, not a C syntax tree. An AST that only says `i32 hp` isn't enough to move bytes; the description needs offsets, sizes, alignment, and a stable storage-kind ID.
-
-```c
-#ifndef ENGINE_API_H
-#define ENGINE_API_H
-
-#include <stdint.h>
-
-#define ENGINE_API_VERSION 1u
-
-enum { STORAGE_I32 = 1, STORAGE_U32 = 2 };
-
-typedef struct {
-    const char *name;
-    uint32_t kind;         /* Shared enum: STORAGE_I32 or STORAGE_U32. */
-    uint64_t offset;       /* Relative to the start of this region. */
-    uint64_t size;
-    uint64_t alignment;
-} FieldLayout;
-
-typedef struct {
-    const char *name;
-    uint32_t field_count;
-    uint64_t offset;       /* Relative to the start of the memory block. */
-    uint64_t size;
-    uint64_t alignment;
-    const FieldLayout *fields;
-} RegionLayout;
-
-typedef struct {
-    uint64_t block_size;
-    uint64_t block_alignment;
-    uint32_t region_count;
-    const RegionLayout *regions;
-} EngineLayout;
-
-typedef uint32_t (__cdecl *EngineApiVersionFn)(void);
-typedef int (__cdecl *EngineDescribeLayoutFn)(const void *block, EngineLayout *out);
-
-#endif
-```
-
-The DLL exports `engine_api_version` and `engine_describe_layout`. Section 3 shows the actual function bodies and how the host calls them. `block == NULL` asks for the planned layout of a new block. A non-null `block` asks for the layout of that live instance.
-
-Also export `int engine_init(void *block, uint64_t size)`: ordinary initialization for any fresh block. It creates the engine's own index and sets default field values. It does not take an old block. Use `__declspec(dllexport)` on the DLL functions and matching function-pointer typedefs and calling conventions on the host side. The host calls them through `GetProcAddress`; it doesn't link an import library.
-
-For this test, table pointers can point to immutable storage inside each DLL. **Keep both DLLs loaded while the host uses those pointers.** If you want to retain a description after unloading its DLL, deep-copy the tables and their name strings into host-owned storage first. Copying `EngineLayout` alone only copies its pointer.
+The planned-layout export is the fixed aggregate checkpoint from Step 05. A separate live-layout export will combine the same generated field table with the instance's region placement. Keeping those two contracts distinct avoids treating an aggregate offset as the live location of a region.
 
 ## 2. Generate `memory.h` and let the compiler measure it
 
-Keep old and new `.mem` fixtures so one run can build both versions. Each top-level struct is one region. The host matches regions by name and fields by name within their region. Position may change; for now a rename is a removal plus an addition.
-
-For `schemas/player-v1.mem`:
-
-```text
-struct Player {
-    i32 hp
-}
-```
-
-And `schemas/player-v2.mem`:
-
-```text
-struct Player {
-    i32 ammo
-    i32 hp
-}
-```
-
-Putting `ammo` first makes `hp` move. The syntax intentionally leaves out defaults: v2's ordinary `engine_init` sets `ammo` to `12`. For this fixture, compile the v2-only initialization statement behind a build define such as `PLAYER_HAS_AMMO` (pass `/DPLAYER_HAS_AMMO` only when compiling v2), so v1 never tries to access a member it doesn't have.
-
-The [C code-generator tutorial](05-c-codegen-tutorial.md) shows how to tokenize the language, parse structs and fields, and emit the generated files. In brief:
-
-1. Validate unique names, valid C spellings, and supported storage kinds (`i32 → int32_t`, `u32 → uint32_t`).
-2. Emit `engine_api.h` using the fixed ABI template and `memory.h` in declaration order. Both DLLs can call their type `Player` because they compile separately.
-3. Emit `memory_layout.inc` with the layout tables and exports below. MSVC evaluates the `offsetof`, `sizeof`, and `_Alignof` expressions in the Windows build. **The generator does not predict MSVC padding.**
-
-Inside the DLL, use one placement routine to calculate region offsets for both `engine_describe_layout(NULL, ...)` and `engine_init`. For the simplest fixed-size version you can also generate a top-level C aggregate and use `offsetof` for the region offsets. Either way, the **DLL**, not the host, owns the engine index. If that index is stored in the block, build it fresh in `engine_init` and **exclude it from the fields the host copies**. Otherwise the host might overwrite the new index with the old region offsets.
+Use the Step 05 fixture files, commands, and generator in `codegen-lab`. `build/v1` and `build/v2` each contain the ABI header, private `memory.h`, and the generated `.inc`. The v1 schema contains `i32 hp`; v2 contains `i32 ammo` followed by `i32 hp`. Build x64 modules to match the x64 test runner.
 
 ## 3. Return a layout from inside the DLL
 
-Start with a fixed layout, so you can prove the export works without building a dynamic index first. In the v2 DLL, suppose the generated `memory.h` contains these types:
-
-```c
-#include <stdint.h>
-
-typedef struct { int32_t ammo; int32_t hp; } Player;
-typedef struct { Player region_Player; } EngineMemory;
-```
-
-Now have the generator emit the following `memory_layout.inc` next to `memory.h`. [Tutorial 05, §5](05-c-codegen-tutorial.md#5-emit-the-tables-and-shared-api) shows how to write the two tables between the fixed prefix (includes and macros) and suffix (exports and `#undef`s). Include `"memory_layout.inc"` **once** in your DLL's `engine.c`; don't compile it into the host. The `FIELD` macro shows exactly what to emit per field. The `REGION` macro computes offsets in the opposite direction: relative to the block instead of the field's enclosing struct.
+This is the complete example of `build/v2/memory_layout.inc` referenced by [Step 05](05-c-codegen-tutorial.md#5-emit-the-tables-and-shared-api). The generator owns the two tables between the macros and exports. [`offsetof`](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf) (C99 §7.17) measures a member relative to its enclosing type. `_Alignof` is C11; these Windows fixture builds use `/std:c11`.
 
 ```c
 #include "engine_api.h"
@@ -134,119 +36,281 @@ static const RegionLayout regions[] = {
     REGION("Player", region_Player, Player, fields_Player),
 };
 
-__declspec(dllexport) uint32_t __cdecl engine_api_version(void)
+#ifndef ENGINE_LAYOUT_EXPORT
+#define ENGINE_LAYOUT_EXPORT __declspec(dllexport)
+#endif
+
+ENGINE_LAYOUT_EXPORT uint32_t __cdecl engine_api_version(void)
 {
     return ENGINE_API_VERSION;
 }
 
-__declspec(dllexport) int __cdecl engine_describe_layout(
+ENGINE_LAYOUT_EXPORT int __cdecl engine_describe_layout(
     const void *block, EngineLayout *out)
 {
-    (void)block; /* Every instance uses this DLL's fixed layout. */
-    if (out == NULL)
+    (void)block; /* This export describes only the fixed standalone fixture. */
+    if (!out)
         return 0;
-
-    *out = (EngineLayout){
-        .block_size = sizeof(EngineMemory),
-        .block_alignment = _Alignof(EngineMemory),
-        .region_count = COUNT(regions),
-        .regions = regions,
-    };
+    *out = (EngineLayout){sizeof(EngineMemory), _Alignof(EngineMemory),
+                          COUNT(regions), regions};
     return 1;
 }
 
+#undef ENGINE_LAYOUT_EXPORT
 #undef REGION
 #undef FIELD
 #undef COUNT
 ```
 
-There are two lifetimes here. The **host** owns the `EngineLayout` variable: it passes its address and the DLL fills it in with `*out = ...`. The **DLL** owns the static `regions` and `fields_*` arrays. They're not stack variables, so the pointers remain valid after the function returns, but **not after `FreeLibrary`**. To keep the description longer, deep-copy all the arrays and their name strings while the DLL is still loaded.
+## 4. Load just one DLL
 
-Here's the host side **after** `LoadLibraryW` succeeds. Since `out` is caller-owned, no allocation or cross-DLL `free` is involved:
+In `codegen-lab/engine.c`, start with `#include "memory_layout.inc"`. Build v1 from the **x64 Native Tools Command Prompt**, working in `codegen-lab`. [`/LD`](https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library) builds a DLL; the `memory_layout.inc` include resolves through `/Ibuild\v1`. Don't place a generated copy next to `engine.c` where it would shadow this version.
 
-```c
-EngineApiVersionFn version = (EngineApiVersionFn)GetProcAddress(
-    dll, "engine_api_version");
-EngineDescribeLayoutFn describe = (EngineDescribeLayoutFn)GetProcAddress(
-    dll, "engine_describe_layout");
+```cmd
+cl /nologo /W4 /TC /std:c11 /LD /Ibuild\v1 engine.c /Fobuild\v1\engine.obj /Febuild\v1\engine_v1.dll
+```
 
-EngineLayout layout = {0};
-if (!version || version() != ENGINE_API_VERSION || !describe ||
-    !describe(NULL, &layout)) {
-    fprintf(stderr, "Could not read a compatible engine layout\n");
-    FreeLibrary(dll);
-    return EXIT_FAILURE;
+For local tests, set the fixture directory in a `.runsettings` file next to your test solution. Use the **absolute** path of your `codegen-lab/build` directory, then select the file under **Test → Configure Run Settings**. [Visual Studio run settings](https://learn.microsoft.com/en-us/visualstudio/test/configure-unit-tests-by-using-a-dot-runsettings-file) documents test environment variables. Alternatively, set the same variable in the shell before running the Google Test executable with `--gtest_filter=DllMigration.*`.
+
+```xml
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <ENGINE_FIXTURE_DIR>C:\labs\codegen-lab\build</ENGINE_FIXTURE_DIR>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>
+```
+
+Create `memorymigration/memory_test/dll_test.cpp` in `memory_tests`. Keep `pch.h` first. [`LoadLibraryW`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryw) takes the full fixture path; [`GetProcAddress`](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress) resolves an exported name. Run assertions inside a helper so the test always reaches `FreeLibrary` for a module it loaded.
+
+```cpp
+#include "pch.h"
+#include "memory.h"
+#include <windows.h>
+#include <wchar.h>
+
+static HMODULE LoadFixture(const wchar_t *relative)
+{
+    wchar_t dir[1024], path[1200];
+    DWORD n = GetEnvironmentVariableW(L"ENGINE_FIXTURE_DIR", dir, 1024);
+    if (!n || n >= 1024)
+        return NULL;
+    int written = swprintf(path, 1200, L"%ls\\%ls", dir, relative);
+    if (written < 0 || written >= 1200)
+        return NULL;
+    return LoadLibraryW(path);
 }
-/* On success, validate the description before using it. */
+
+typedef uint32_t (__cdecl *VersionFn)(void);
+typedef int (__cdecl *LayoutFn)(const void *, EngineLayout *);
+
+static void CheckOneDll(HMODULE dll)
+{
+    VersionFn version = (VersionFn)GetProcAddress(dll, "engine_api_version");
+    LayoutFn describe = (LayoutFn)GetProcAddress(dll, "engine_describe_layout");
+    ASSERT_TRUE(version != NULL && describe != NULL);
+    ASSERT_EQ(ENGINE_API_VERSION, version());
+    EngineLayout layout = {0};
+    ASSERT_TRUE(describe(NULL, &layout));
+    ASSERT_EQ(1u, layout.region_count);
+    ASSERT_EQ(1u, layout.regions[0].field_count);
+    EXPECT_STREQ("Player", layout.regions[0].name);
+    EXPECT_STREQ("hp", layout.regions[0].fields[0].name);
+    EXPECT_EQ(STORAGE_I32, layout.regions[0].fields[0].kind);
+}
+
+TEST(DllMigration, LoadsOneLayout)
+{
+    HMODULE dll = LoadFixture(L"v1\\engine_v1.dll");
+    ASSERT_TRUE(dll != NULL);
+    CheckOneDll(dll);
+    FreeLibrary(dll);
+}
 ```
 
-For a live v1 block, call the v1 DLL's `describe(old_block, &old_layout)`. Call the **v2** DLL's `describe(NULL, &new_layout)` for the planned layout. Both calls use the same signature, but their tables come from different compiled headers. If you later let the engine choose offsets at runtime, `offsetof(EngineMemory, member)` no longer describes those placements. Read actual region offsets from that DLL's own index for a live block and use the same placement routine as `engine_init` for a planned block. Return the actual offsets via caller-owned table storage or another explicitly documented lifetime; don't return pointers to local arrays.
+Run `DllMigration.LoadsOneLayout`. Expect one pass. If loading fails, first check the absolute fixture directory, the DLL's location, and x64 on both sides. If an export fails, inspect `dumpbin /exports build\v1\engine_v1.dll`. Don't use a layout table after unloading: the output struct belongs to the test, but its table and string pointers point into the DLL.
 
-## 4. Build and load two DLLs from `main.c`
+## 5. Give each DLL its own live block
 
-Keep `memorymigration.vcxproj` as the host-only project. Run the built host from the project folder in an **x64 Native Tools Command Prompt** so its child `cl` processes inherit `PATH`, `INCLUDE`, and `LIB`. Set the Visual Studio debugger working directory to `$(ProjectDir)` if debugging there; the debuggee still needs the developer environment. Don't hard-code a Visual Studio toolset version.
-
-Give your generator two arguments: the input schema and output directory. Generate `engine_api.h`, `memory.h`, and `memory_layout.inc` into each of `build/v1` and `build/v2`. Keep `engine.c` shared across builds, and don't leave copies of the generated files beside `engine.c` that would shadow the versions in the include directories. Once the build directories exist, a v1 command could look like this in `main.c`:
+Append the following to `codegen-lab/engine.c` below the generated include. This is the Step 02a pattern with a one-region private index at byte zero. A larger `engine` array in v2 moves the region; the generated `fields_Player` table still measures fields relative to `Player`. The host will ask for the required size, not cast the block. `engine_init` creates ordinary defaults for this fixture; the old build uses a known HP value so the test can observe migration.
 
 ```c
-if (system("build\\generate_memory.exe schemas\\player-v1.mem "
-           "build\\v1") != 0)
-    return EXIT_FAILURE;
+#ifdef PLAYER_HAS_AMMO
+#define ENGINE_WORDS 2
+#else
+#define ENGINE_WORDS 1
+#endif
 
-if (system("cl /nologo /TC /std:c11 /LD /Ibuild\\v1 engine.c "
-           "/Fobuild\\v1\\engine.obj /Febuild\\v1\\engine_v1.dll") != 0)
-    return EXIT_FAILURE;
+typedef struct { size_t player_offset; } FixtureIndex;
+typedef struct {
+    FixtureIndex index;
+    int32_t engine[ENGINE_WORDS];
+    Player player;
+} FixtureState;
+
+__declspec(dllexport) uint64_t __cdecl engine_state_size(void)
+{
+    return sizeof(FixtureState);
+}
+
+__declspec(dllexport) int __cdecl engine_init(void *block, uint64_t size)
+{
+    if (!block || size < sizeof(FixtureState))
+        return 0;
+    FixtureState *state = block;
+    *state = (FixtureState){0};
+    state->index.player_offset = offsetof(FixtureState, player);
+#ifdef PLAYER_HAS_AMMO
+    state->player.ammo = 12;
+#else
+    state->player.hp = 37;
+#endif
+    return 1;
+}
+
+__declspec(dllexport) int __cdecl engine_describe_live(
+    const void *block, uint64_t size, RegionLayout *region, EngineLayout *out)
+{
+    if (!block || size < sizeof(FixtureState))
+        return 0;
+    const FixtureState *state = block;
+    *region = regions[0];
+    /* The generated field table stays; replace the aggregate's placement. */
+    region->offset = state->index.player_offset;
+    *out = (EngineLayout){sizeof(FixtureState), _Alignof(FixtureState), 1, region};
+    return 1;
+}
+
+__declspec(dllexport) void __cdecl engine_read_values(
+    const void *block, int32_t *hp, int32_t *ammo)
+{
+    const unsigned char *bytes = block;
+    const FixtureIndex *index = block;
+    const Player *player = (const Player *)(bytes + index->player_offset);
+    *hp = (int32_t)player->hp;
+#ifdef PLAYER_HAS_AMMO
+    *ammo = player->ammo;
+#else
+    *ammo = 0;
+#endif
+}
 ```
 
-Repeat those calls in `memorymigration/main.c` for v2: use `schemas\\player-v2.mem` and `build\\v2` in the generator call, use `/Ibuild\\v2` and `/DPLAYER_HAS_AMMO` in the `cl` call, and write `build\\v2\\engine.obj` and `build\\v2\\engine_v2.dll`. Use `GetFullPathNameW` (checking for failure or truncation) and `LoadLibraryW` to load the exact DLL you built. Resolve and check every required export. **Never load an output from a failed build** just because a stale DLL remains on disk. Use separate filenames so both DLLs can stay mapped and the build doesn't try to overwrite a loaded DLL.
+Create `schemas/player-bad.mem` in `codegen-lab`: use v2's schema with `u32 hp` instead of `i32 hp`. In the same prompt, regenerate that fixture and build all three DLLs. Stop on the first failed command; don't run against stale artifacts. Close active fixture users before rebuilding DLLs.
 
-First get the generator to emit the v2 example and print its layout from the host. Then generate v1 and confirm the same executable sees a different layout through the same exports.
-
-## 5. Reserve pages, then let each engine initialize them
-
-Ask v1 for its fresh layout. The host checks the requested size and alignment, reserves and commits sufficient memory, then calls v1's `engine_init`. With this demo's ordinary C alignments, a `VirtualAlloc` base can satisfy the request; still check the actual base alignment and reject unsupported requests. You can use `MEM_RESERVE | MEM_COMMIT` in one call. If you split them later, remember that **reserved-only pages aren't readable or writable**.
-
-For a test fixture, have v1 seed its own state with known values through a test-only export. The host doesn't write good-looking magic numbers into guessed offsets. When ready to migrate:
-
-1. Ask the old DLL for the layout of the **live old block**.
-2. Ask the new DLL for its planned layout, allocate a separate candidate block, and call its ordinary `engine_init`. Ask it for the candidate's actual layout. Verify the actual layout fits the block and matches the placement contract.
-3. Keep the old block and DLL intact until the candidate is validated and fully populated.
-
-The new engine knows how to initialize a block and how to use it. It never sees the old block and doesn't have a migration callback.
+```cmd
+mkdir build\bad
+build\generate_memory.exe schemas\player-bad.mem build\bad
+cl /nologo /W4 /TC /std:c11 /LD /Ibuild\v1 engine.c /Fobuild\v1\engine.obj /Febuild\v1\engine_v1.dll
+cl /nologo /W4 /TC /std:c11 /LD /DPLAYER_HAS_AMMO /Ibuild\v2 engine.c /Fobuild\v2\engine.obj /Febuild\v2\engine_v2.dll
+cl /nologo /W4 /TC /std:c11 /LD /DPLAYER_HAS_AMMO /Ibuild\bad engine.c /Fobuild\bad\engine.obj /Febuild\bad\engine_bad.dll
+```
 
 ## 6. Diff the descriptions into a copy plan
 
-Do the diff **before** writing any bytes. Match region names, then field names within each matched region. Use `strcmp` on the name strings; the pointer values will differ across DLLs. A linear search is fine for the prototype. The plan can be an array of `{old_absolute_offset, new_absolute_offset, byte_count}` records in a small host-owned arena or a fixed-capacity array for this test.
+Append these helpers and cases to `dll_test.cpp`. The host supplies separate committed pages using [`VirtualAlloc`](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc); this fixture uses only ordinary x64 struct alignment. The test never includes `FixtureState` or `FixtureIndex`. On a failed plan it performs no copy, and the old engine's read export still works. Validate sizes against the actual allocations before applying even a successful plan.
 
-| Difference | Host action |
-| --- | --- |
-| Same region and field names, same storage kind and size | Add a copy operation. Offsets may differ. |
-| New field or new region | Leave the candidate's initialized value untouched. |
-| Removed field or region | No copy. |
-| Same field name with a changed kind or size | Fail this migration. Don't silently cast or treat equal-sized types as interchangeable. |
+```cpp
+typedef uint64_t (__cdecl *SizeFn)(void);
+typedef int (__cdecl *InitFn)(void *, uint64_t);
+typedef int (__cdecl *LiveFn)(const void *, uint64_t, RegionLayout *, EngineLayout *);
+typedef void (__cdecl *ReadFn)(const void *, int32_t *, int32_t *);
 
-Check both descriptions: unique, non-null names in each scope, supported kinds, sane table counts, nonzero valid alignments, aligned addresses, and no out-of-bounds or overlapping region/field ranges in this scalar-only model. Use checks like `offset <= limit && size <= limit - offset` before adding sizes or offsets. Calculate absolute offsets only after validating the field is within its region and the region is within the actual block. If a description is invalid or the plan doesn't fit, discard the candidate; the old engine is still usable.
+typedef struct {
+    HMODULE dll;
+    MemoryBlock block;
+    LiveFn describe;
+    ReadFn read;
+} Instance;
 
-After validation, applying a plan entry is just:
+static bool OpenInstance(const wchar_t *path, Instance *out)
+{
+    out->dll = LoadFixture(path);
+    if (!out->dll)
+        return false;
+    VersionFn version = (VersionFn)GetProcAddress(out->dll, "engine_api_version");
+    if (!version || version() != ENGINE_API_VERSION)
+        return false;
+    SizeFn size = (SizeFn)GetProcAddress(out->dll, "engine_state_size");
+    InitFn init = (InitFn)GetProcAddress(out->dll, "engine_init");
+    out->describe = (LiveFn)GetProcAddress(out->dll, "engine_describe_live");
+    out->read = (ReadFn)GetProcAddress(out->dll, "engine_read_values");
+    if (!size || !init || !out->describe || !out->read)
+        return false;
+    uint64_t bytes = size();
+    if (!bytes || bytes > SIZE_MAX)
+        return false;
+    out->block.capacity = (size_t)bytes;
+    out->block.base = (unsigned char *)VirtualAlloc(NULL, out->block.capacity,
+                                      MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    return out->block.base && init(out->block.base, out->block.capacity);
+}
 
-```c
-memcpy(new_base + op.new_absolute_offset,
-       old_base + op.old_absolute_offset,
-       op.byte_count);
+static void CloseInstance(Instance *instance)
+{
+    if (instance->block.base)
+        VirtualFree(instance->block.base, 0, MEM_RELEASE);
+    if (instance->dll)
+        FreeLibrary(instance->dll);
+}
+
+static void CheckMigration(const Instance *old, const Instance *candidate,
+                           bool should_copy)
+{
+    RegionLayout old_region = {0}, new_region = {0};
+    EngineLayout a = {0}, b = {0};
+    ASSERT_TRUE(old->describe(old->block.base, old->block.capacity, &old_region, &a));
+    ASSERT_TRUE(candidate->describe(candidate->block.base, candidate->block.capacity,
+                                    &new_region, &b));
+    ASSERT_LE(a.block_size, old->block.capacity);
+    ASSERT_LE(b.block_size, candidate->block.capacity);
+    ASSERT_NE(old_region.offset, new_region.offset);
+    CopyOp op = {0};
+    size_t count = 0;
+    bool planned = build_copy_plan(&a, &b, &op, 1, &count);
+    ASSERT_EQ(should_copy, planned);
+    if (planned) {
+        ASSERT_EQ(1u, count);
+        ASSERT_TRUE(copy_field(&old->block, &candidate->block, op));
+    } else {
+        EXPECT_EQ(0u, count);
+    }
+    int32_t hp = 0, ammo = 0;
+    candidate->read(candidate->block.base, &hp, &ammo);
+    EXPECT_EQ(should_copy ? 37 : 0, hp);
+    EXPECT_EQ(12, ammo);
+    old->read(old->block.base, &hp, &ammo);
+    EXPECT_EQ(37, hp);
+}
+
+static void RunMigration(const wchar_t *path, bool should_copy)
+{
+    Instance old = {0}, candidate = {0};
+    bool opened_old = OpenInstance(L"v1\\engine_v1.dll", &old);
+    bool opened_candidate = OpenInstance(path, &candidate);
+    EXPECT_TRUE(opened_old);
+    EXPECT_TRUE(opened_candidate);
+    if (opened_old && opened_candidate)
+        CheckMigration(&old, &candidate, should_copy);
+    /* CheckMigration has returned, so none of its borrowed tables are in use. */
+    CloseInstance(&candidate);
+    CloseInstance(&old);
+}
+
+TEST(DllMigration, MigratesMatchingHp)
+{
+    RunMigration(L"v2\\engine_v2.dll", true);
+}
+
+TEST(DllMigration, RejectsCandidateAndKeepsOldState)
+{
+    RunMigration(L"bad\\engine_bad.dll", false);
+}
 ```
 
-`old_base` and `new_base` are byte pointers to distinct committed blocks. Copy **fields**, not whole regions, so new defaults and new engine bookkeeping survive. The first version should reject raw pointers, references into the old block, and process resources such as file handles. Those need explicit semantics; a generic byte copy can't fix them.
+Build `memory_tests` and run `DllMigration` in Test Explorer. Expect three passes. If offsets don't differ, check `/DPLAYER_HAS_AMMO` and the live export: it must replace the generated aggregate offset. If the bad candidate is accepted, compare the two `hp` kinds and check that you loaded `engine_bad.dll`.
 
-## 7. Prove that the engine can use the result
+This proves an attempt can be rejected without losing the old state. A real host would discard only the candidate on failure, or replace its active `(DLL, block)` pair together on success. This test releases both instances at the end; it doesn't implement dispatch or a reload loop.
 
-Make this a one-shot test, not a live reload loop:
-
-1. v1 seeds `hp = 37` through its own typed code. v2 initializes `ammo = 12` in the candidate.
-2. The host prints the copy plan using the names and byte offsets from the metadata. It never uses `Player` as a C type or hard-codes the name `hp` in the diff.
-3. v2 verifies through its normal access path that `hp = 37` and `ammo = 12`. A test-only verification export can return pass/fail. On the prototype MSVC target, the copy plan should move four bytes from old offset 0 to new offset 4.
-4. Change v2 `hp` to `u32` and confirm that the host rejects the kind mismatch even though the size is unchanged. Check that v1 still reads 37 HP.
-5. On success, switch the active pair **`(DLL, block)`** together. Do not dispatch an old export with the new block or unload a DLL while any function pointer or layout table from it is still in use. Free the old allocation with `VirtualFree(old_base, 0, MEM_RELEASE)` only when it is no longer referenced.
-
-In a real reload you'll also need to stop engine calls and background work during the handoff. Leave that out of this test. If the one-shot version passes, you've proved the important boundary: **the engine interprets and indexes its state; the host only owns the pages and executes the diff.**
-
-Next: [07 · Migrate arrays between memory blocks](07-array-migration-tutorial.md).
+Next: [07 · Array migration](07-array-migration-tutorial.md).

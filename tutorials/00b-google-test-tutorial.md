@@ -4,7 +4,7 @@ Complete [the static library and Google Test setup](00a-memory-library-tutorial.
 
 ## Write three tests
 
-In the `memory_tests` project's `test.cpp` (`memorymigration/memory_test/test.cpp` in the checkout), replace the template test with the following. Keep `pch.h` first. Google Test requires compiling the test file as C++, but the test bodies use C-style declarations, casts, `malloc`, and `free`. `CheckCursors` can return early on a fatal assertion; the calling test still frees the block.
+In the `memory_tests` project's `test.cpp` (`memorymigration/memory_test/test.cpp` in the checkout), replace the template test with the following. Keep `pch.h` first. Google Test requires compiling the test file as C++, but the test bodies use C-style declarations, casts, `malloc`, and `free`. Use `ASSERT_TRUE` when continuing would be unsafe, and `EXPECT_EQ` when we can report more than one mismatch. A fatal assertion returns from the current function, not the entire call stack ([GoogleTest assertions reference](https://google.github.io/googletest/reference/assertions.html)). Put the checks in `CheckCursors` so the calling test still frees the block if initialization fails.
 
 ```cpp
 #include "pch.h"
@@ -13,6 +13,7 @@ In the `memory_tests` project's `test.cpp` (`memorymigration/memory_test/test.cp
 
 static void CheckCursors(MemoryBlock block)
 {
+    /* Do not read the header unless initialization succeeded. */
     ASSERT_TRUE(memory_init(block));
     const Memory *index = (const Memory *)block.base;
     EXPECT_EQ(sizeof(Memory), index->front);
@@ -31,6 +32,7 @@ TEST(MemoryInit, SetsCursors)
 TEST(MemoryInit, RejectsUndersizedBlock)
 {
     Memory storage = {0};
+    /* Give initialization one byte less than it needs for the header. */
     MemoryBlock block = {(unsigned char *)&storage, sizeof(storage) - 1};
     EXPECT_FALSE(memory_init(block));
 }
