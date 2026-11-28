@@ -2,11 +2,11 @@
 
 Start with one Google Test case: the old player has **37 HP**, and the new player has a default of **12 ammo**. After copying `hp`, expect the new player to keep its default ammo and the old player to remain unchanged.
 
-Complete [the C library setup](02a-memory-library-tutorial.md) and [the initialization tests](02b-google-test-tutorial.md) first. No DLLs, generated headers, or console app are needed. Leave `memorymigration/main.c` untouched.
+Start here once the [00b · Initialization tests](00b-google-test-tutorial.md) pass. No DLLs, generated headers, or console app are needed. Leave `memorymigration/main.c` untouched.
 
 ## 1. Add the byte-copy helper to `memory.lib`
 
-In `memorymigration/memory/memory_block.h`, add this type and declaration inside the existing C linkage guards:
+In `memorymigration/memory/memory.h`, add this type and declaration inside the existing C linkage guards:
 
 ```c
 typedef struct {
@@ -15,23 +15,22 @@ typedef struct {
     size_t size;
 } CopyOp;
 
-int copy_field(void *dst, size_t dst_size,
-               const void *src, size_t src_size, CopyOp op);
+bool copy_field(const MemoryBlock *src, const MemoryBlock *dest, CopyOp op);
 ```
 
-In `memorymigration/memory/memory_block.c`, add `#include <string.h>` beside the existing include, then append this function below `memory_init`. The caller supplies distinct, non-overlapping buffers.
+In `memorymigration/memory/memory.c`, add `#include <string.h>` beside the existing include, then append this function below `memory_init`. The caller supplies valid descriptors for distinct, non-overlapping buffers. `const MemoryBlock *` prevents changing either descriptor, but `dest->base` still points to writable bytes.
 
 ```c
-int copy_field(void *dst, size_t dst_size,
-               const void *src, size_t src_size, CopyOp op)
+bool copy_field(const MemoryBlock *src, const MemoryBlock *dest, CopyOp op)
 {
-    if (op.old_offset > src_size || op.size > src_size - op.old_offset ||
-        op.new_offset > dst_size || op.size > dst_size - op.new_offset)
-        return 0;
+    if (op.old_offset > src->capacity ||
+        op.size > src->capacity - op.old_offset ||
+        op.new_offset > dest->capacity ||
+        op.size > dest->capacity - op.new_offset)
+        return false;
 
-    memcpy((unsigned char *)dst + op.new_offset,
-           (const unsigned char *)src + op.old_offset, op.size);
-    return 1;
+    memcpy(dest->base + op.new_offset, src->base + op.old_offset, op.size);
+    return true;
 }
 ```
 
@@ -39,32 +38,36 @@ Check the starting offset first, then subtract it from the capacity to find the 
 
 ## 2. Add and run the unit test
 
-Append this test to `memorymigration/memory_tests_gtest/test.cpp`. The C++ fixture knows both layouts; the C function only sees byte ranges. `offsetof` measures each layout independently.
+Append this test to the `memory_tests` project's `test.cpp` (`memorymigration/memory_test/test.cpp` in the checkout). The test fixture knows both layouts; the C function only sees byte ranges. `offsetof` measures each layout independently.
 
 ```cpp
-struct PlayerV1 { int hp; };
-struct PlayerV2 { int hp; int ammo; };
+typedef struct { int hp; } PlayerV1;
+typedef struct { int hp; int ammo; } PlayerV2;
 
 TEST(ScalarMigration, CopiesHpAndKeepsAmmoDefault)
 {
-    const PlayerV1 old{37};
-    PlayerV2 next{};
+    PlayerV1 old = {37};
+    PlayerV2 next = {0};
     next.ammo = 12;
-    const CopyOp copy_hp{offsetof(PlayerV1, hp), offsetof(PlayerV2, hp),
-                         sizeof old.hp};
+    const CopyOp copy_hp = {
+        offsetof(PlayerV1, hp), offsetof(PlayerV2, hp), sizeof old.hp
+    };
 
-    ASSERT_TRUE(copy_field(&next, sizeof next, &old, sizeof old, copy_hp));
+    const MemoryBlock src = {(unsigned char *)&old, sizeof old};
+    const MemoryBlock dest = {(unsigned char *)&next, sizeof next};
+
+    ASSERT_TRUE(copy_field(&src, &dest, copy_hp));
     EXPECT_EQ(37, old.hp);
     EXPECT_EQ(37, next.hp);
     EXPECT_EQ(12, next.ammo);
 }
 ```
 
-Build `memory_tests_gtest` in **Debug | x64** and run `ScalarMigration.CopiesHpAndKeepsAmmoDefault` in **Test → Test Explorer**. Expect one pass. If `copy_field` doesn't link, check that its declaration is inside the C linkage guards and that the test project references `memory`.
+Build `memory_tests` in **Debug | x64** and run `ScalarMigration.CopiesHpAndKeepsAmmoDefault` in **Test → Test Explorer**. Expect one pass. If `copy_field` doesn't link, check that its declaration is inside the C linkage guards and that the test project references `memory`.
 
 ## 3. Check that the copy follows the field
 
-Change only `PlayerV2` to `struct PlayerV2 { int ammo; int hp; };`, rebuild, and rerun. The case should still pass: the copy follows the new `offsetof(PlayerV2, hp)`. A whole-object copy would instead overwrite `ammo` and leave `hp` at zero.
+Change only `PlayerV2` to `typedef struct { int ammo; int hp; } PlayerV2;`, rebuild, and rerun. The case should still pass: the copy follows the new `offsetof(PlayerV2, hp)`. A whole-object copy would instead overwrite `ammo` and leave `hp` at zero.
 
 For a separate rejection case, give `CopyOp` a valid source offset but set `new_offset` to `sizeof next` with a nonzero `size`. Expect `copy_field` to return false and the destination values to remain unchanged.
 

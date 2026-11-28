@@ -1,10 +1,10 @@
 # 02 · Put the engine's memory index at byte zero
 
-Extend the existing C `memory.lib` and add Google Test cases in `memory_tests_gtest`. You won't edit or run `memorymigration/main.c`.
+Extend the existing C `memory.lib` and add Google Test cases in `memory_tests`. You won't edit or run `memorymigration/main.c`.
 
 ## Before you start
 
-Open the test solution from [the library setup](02a-memory-library-tutorial.md) in Visual Studio. Select **Debug | x64** and confirm that the [initialization tests](02b-google-test-tutorial.md) pass before changing the layout.
+Open the test solution from [the library setup](00a-memory-library-tutorial.md) in Visual Studio. Select **Debug | x64** and confirm that the [initialization tests](00b-google-test-tutorial.md) pass before changing the layout.
 
 ## 1. Give each region a fixed slot
 
@@ -15,7 +15,7 @@ base + 0
   [ Memory: cursors and index ] [padding] [ Engine ] [ Game ] [ Editor ] [free space]
 ```
 
-In `memorymigration/memory/memory_block.h`, replace the `Memory` definition with the following types, keeping them inside the existing header guard. Add the `memory_find_region` declaration beside `memory_init`, inside the C linkage guards.
+In `memorymigration/memory/memory.h`, replace the `Memory` definition with the following types, keeping them inside the existing header guard. Add the `memory_find_region` declaration beside `memory_init`, inside the C linkage guards.
 
 ```c
 typedef enum {
@@ -45,32 +45,32 @@ const Region *memory_find_region(const Memory *index, RegionType type);
 
 ## 2. Place the regions in the C library
 
-In `memorymigration/memory/memory_block.c`, replace `memory_init` and add the lookup below it. Keep the `memory_block.h` include.
+In `memorymigration/memory/memory.c`, replace `memory_init` and add the lookup below it. Keep `#include "memory.h"`.
 
 ```c
-int memory_init(void *base, size_t capacity)
+bool memory_init(MemoryBlock block)
 {
-    if (!base || capacity < sizeof(Memory))
-        return 0;
+    if (!block.base || block.capacity < sizeof(Memory))
+        return false;
 
     size_t cursor = sizeof(Memory);
     const size_t stride = sizeof(Marker);
     const size_t padding = (stride - cursor % stride) % stride;
-    if (padding > capacity - cursor ||
-        REGION_COUNT > (capacity - cursor - padding) / stride)
-        return 0;
+    if (padding > block.capacity - cursor ||
+        REGION_COUNT > (block.capacity - cursor - padding) / stride)
+        return false;
     cursor += padding;
 
-    Memory *index = base;
-    unsigned char *bytes = base;
+    Memory *index = (Memory *)block.base;
+    unsigned char *bytes = block.base;
     for (size_t i = 0; i < REGION_COUNT; ++i) {
         index->regions[i] = (Region){cursor, stride};
         *(Marker *)(bytes + cursor) = (Marker){10 * (1 + (int)i)};
         cursor += stride;
     }
     index->front = cursor;
-    index->back = capacity;
-    return 1;
+    index->back = block.capacity;
+    return true;
 }
 
 const Region *memory_find_region(const Memory *index, RegionType type)
@@ -85,49 +85,54 @@ The fit check happens before writing anything. `malloc` supplies a suitably alig
 
 ## 3. Look up `Game` in a unit test
 
-In `memorymigration/memory_tests_gtest/test.cpp`, update `MemoryInit.SetsCursors`: replace `EXPECT_EQ(sizeof(Memory), index->front);` with the following. Change the capacity in `MemoryInit.RejectsUndersizedBlock` to `sizeof(storage)` so it proves that a block with room for the index alone is rejected.
+In the `memory_tests` project's `test.cpp` (`memorymigration/memory_test/test.cpp` in the checkout), update `CheckCursors`: replace `EXPECT_EQ(sizeof(Memory), index->front);` with the following. Change the `MemoryBlock` initializer's capacity in `MemoryInit.RejectsUndersizedBlock` to `sizeof(storage)` so it proves that a block with room for the index alone is rejected.
 
 ```cpp
-const auto* editor = memory_find_region(index, REGION_EDITOR);
-ASSERT_NE(nullptr, editor);
+const Region *editor = memory_find_region(index, REGION_EDITOR);
+ASSERT_TRUE(editor != NULL);
 EXPECT_EQ(editor->offset + editor->size, index->front);
 ```
 
-Append these cases to the same file. The fatal range assertions stop the test before it forms an invalid payload pointer.
+Append this helper and these cases to the same file. Fatal assertions stop the helper before it forms an invalid payload pointer; the calling test still frees the block.
 
 ```cpp
-TEST(MemoryIndex, FindsGameInFixedSlot)
+static void CheckGameSlot(MemoryBlock block)
 {
-    constexpr size_t capacity = 256;
-    std::unique_ptr<void, decltype(&std::free)> block(
-        std::malloc(capacity), &std::free);
-    ASSERT_NE(nullptr, block.get());
-    ASSERT_TRUE(memory_init(block.get(), capacity));
+    ASSERT_TRUE(memory_init(block));
 
-    const auto* index = static_cast<const Memory*>(block.get());
-    const auto* game = memory_find_region(index, REGION_GAME);
+    const Memory *index = (const Memory *)block.base;
+    const Region *game = memory_find_region(index, REGION_GAME);
     ASSERT_EQ(&index->regions[REGION_GAME], game);
     ASSERT_GE(game->offset, sizeof(Memory));
-    ASSERT_LE(game->offset, capacity);
+    ASSERT_LE(game->offset, block.capacity);
     ASSERT_EQ(0u, game->offset % sizeof(Marker));
     ASSERT_EQ(sizeof(Marker), game->size);
-    ASSERT_LE(game->size, capacity - game->offset);
+    ASSERT_LE(game->size, block.capacity - game->offset);
 
-    const auto* bytes = static_cast<const unsigned char*>(block.get());
-    const auto* marker = reinterpret_cast<const Marker*>(bytes + game->offset);
+    const unsigned char *bytes = block.base;
+    const Marker *marker = (const Marker *)(bytes + game->offset);
     EXPECT_EQ(20, marker->value);
+}
+
+TEST(MemoryIndex, FindsGameInFixedSlot)
+{
+    const size_t capacity = 256;
+    MemoryBlock block = {(unsigned char *)malloc(capacity), capacity};
+    ASSERT_TRUE(block.base != NULL);
+    CheckGameSlot(block);
+    free(block.base);
 }
 
 TEST(MemoryIndex, RejectsInvalidSlot)
 {
-    const Memory index{};
-    EXPECT_EQ(nullptr, memory_find_region(&index, REGION_COUNT));
+    const Memory index = {0};
+    EXPECT_TRUE(memory_find_region(&index, REGION_COUNT) == NULL);
 }
 ```
 
-Build `memory_tests_gtest`, then run the `MemoryInit` and `MemoryIndex` groups in **Test → Test Explorer**. Expect five passing cases across both groups. If `SetsCursors` expects `front` at the end of the header, update it to check the end of `Editor`. If the marker is wrong, check that `Game` uses slot 1 and that the lookup adds the offset to the block base.
+Build `memory_tests`, then run the `MemoryInit` and `MemoryIndex` groups in **Test → Test Explorer**. Expect five passing cases across both groups. If `SetsCursors` expects `front` at the end of the header, update it to check the end of `Editor`. If the marker is wrong, check that `Game` uses slot 1 and that the lookup adds the offset to the block base.
 
-**Try it:** Temporarily change the lookup in `FindsGameInFixedSlot` to `REGION_ENGINE`. Expect the slot assertion to fail. Restore `REGION_GAME` before continuing.
+**Try it:** Temporarily change the lookup in `CheckGameSlot` to `REGION_ENGINE`. Expect the slot assertion to fail. Restore `REGION_GAME` before continuing.
 
 ## Review: the index is not migration metadata
 
@@ -137,7 +142,7 @@ Byte zero is a location contract, not a layout contract. The old DLL describes i
 
 ## Optional follow-up: strings and sub-arenas
 
-Keep these exercises in the same two projects. Put the C helpers in `memory_block.c`, their declarations inside the C linkage guards in `memory_block.h`, and each behavior check in a separate `TEST` in `test.cpp`.
+Keep these exercises in the same two projects. Put the C helpers in `memory.c`, their declarations inside the C linkage guards in `memory.h`, and each behavior check in a separate `TEST` in `test.cpp`.
 
 - **Strings:** Store references as `{offset, length}`, not pointers. For a downward-growing pool, require `front <= back <= capacity` and `length < back - front` before reserving `length + 1` bytes for text and its terminator. With capacity 256, appending `door` then `open` should produce offsets 251 and 246. Add a separate case where the text would exactly fill the gap without its terminator; expect rejection and unchanged cursors. Resolve references only within the occupied pool and check that the terminator is inside the block. Migration must copy the string bytes and install a new reference, not copy the old offset.
 - **Sub-arenas:** Reserve non-overlapping, suitably aligned ranges by advancing the root `front`. Store each range's block-relative start, capacity, and local cursor. Test that allocations in one range don't move another's cursor or the root cursor. Persistent references must not point into scratch space that can be reset.

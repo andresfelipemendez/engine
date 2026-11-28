@@ -1,9 +1,11 @@
 # Tutorial roadmap
 
-Start with [the C `memory.lib` and Google Test project](02a-memory-library-tutorial.md), then run the [initialization unit tests](02b-google-test-tutorial.md) in Visual Studio Test Explorer. Steps 01 and 02 extend that library and test suite; they don't need a console app, DLLs, or generated headers.
+Start at 00a and follow the steps in order. Steps 01 and 02 build on the same C library and Google Test project without a console app, DLLs, or generated headers.
 
 | Step | Tutorial | Move on when… |
 | --- | --- | --- |
+| 00a | [Set up the memory library and Google Test](00a-memory-library-tutorial.md) | `memory.lib` builds and `memory_tests` references it. |
+| 00b | [Run the initialization unit tests](00b-google-test-tutorial.md) | All three `MemoryInit` cases pass in Test Explorer. |
 | 01 | [First memory migration test](01-first-memory-migration-test.md) | `hp` survives a field reorder and `ammo` keeps its new default. Try matching two field descriptors instead of hard-coding the copy operation before building the host diff. |
 | 02 | [Memory index](02-memory-index-tutorial.md) | One block places `Engine`, `Game`, and `Editor` in fixed order, and a direct lookup finds `Game` through the index at byte zero. Run the `MemoryInit` and `MemoryIndex` groups in Test Explorer; defer strings and sub-arenas until you need them. |
 | 03 | [Arena allocation](03-arena-tutorial.md) | You can allocate aligned ranges from one block and reject a request that doesn't fit. |
